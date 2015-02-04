@@ -53,7 +53,7 @@ MODULES = read_input gamma measure_gauge_action start \
 	reweighting_factor_nd rnd_gauge_trafo \
 	online_measurement update_momenta integrator  phmc \
 	little_D block operator measurements pion_norm \
-	temporalgauge spinor_fft X_psi P_M_eta \
+	temporalgauge spinor_fft X_psi P_M_eta memalloc \
 	jacobi fatal_error invert_clover_eo gettime @SPI_FILES@
 
 ## the GPU modules (all .cu files in $GPUDIR)
