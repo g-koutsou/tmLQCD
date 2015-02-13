@@ -451,6 +451,11 @@ int arpack_cg(
     free(evecs); free(evals); free(H); free(HU); free(Hinv);
     free(initwork); free(tmpv1); free(zheev_work);
     free(hevals); free(zheev_rwork); free(IPIV);
+    /* Reset these, since we may need to call arpack again, e.g. for a
+       different operator */
+    ncurRHS = 0; 
+    info_arpack = 0;
+    nconv = 0;
   }
 
 
