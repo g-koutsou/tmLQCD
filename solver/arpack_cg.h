@@ -66,7 +66,14 @@ int arpack_cg(
      int cheb_k,                    /*(IN) degree of the Chebyshev polynomial (irrelevant if acc=0)*/
      double emin,                      /*(IN) lower end of the interval where the acceleration will be used (irrelevant if acc=0)*/
      double emax,                      /*(IN) upper end of the interval where the acceleration will be used (irrelevant if acc=0)*/
-     char *arpack_logfile           /*(IN) file name to be used for printing out debugging information from arpack*/
-     );
+     char *arpack_logfile,           /*(IN) file name to be used for printing out debugging information from arpack*/
+     const int op_id		     /* (IN) the operator ID. ARPACK
+					will deflate for each new
+					operator, and keep the
+					eigenvectors alive separately
+					for different operatos. Useful
+					for interleaving up and down
+					inversions */
+	      );
 
 #endif 

@@ -57,7 +57,7 @@ typedef struct {
   integratefk integrate[10];
 } integrator;
 
-extern integrator Integrator;
+integrator Integrator;
 
 /* all following functions are currently defined in integrator.c */
 /* function to initialise the integrator, to be called once at the beginning */

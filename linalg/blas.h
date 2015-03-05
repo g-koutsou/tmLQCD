@@ -38,6 +38,7 @@
 #define dscal DSCAL
 #define dgemv DGEMV
 #define dgemm DGEMM
+#define zcopy ZCOPY
 extern double _FT(dasum);
 extern double _FT(ddot)();
 extern void _FT(zdotc)();
@@ -52,6 +53,7 @@ extern void _FT(dgemv)();
 extern void _FT(zgemv)();
 extern void _FT(dgemm)();
 extern void _FT(zgemm)();
+extern void _FT(zcopy)();
 #else
 
 /* BLAS-1 functions */
@@ -63,7 +65,6 @@ extern void _FT(zdotc)(int* n, _Complex double x[], int* incx, _Complex double y
 extern double _FT(dnrm2)(int* n, double x[], int* incx);
 extern double _FT(znrm2)(int* n, _Complex double x[], int* incx);
 extern int _FT(idamax)(int* n, double x[], int* incx);
-
 /* BLAS-1 subroutines */
 extern void _FT(daxpy)(int* n, double* a, double x[], int* incx,
         double y[], int* incy);
@@ -71,6 +72,8 @@ extern void _FT(zaxpy)(int* n, _Complex double* a, _Complex double x[], int* inc
         _Complex double y[], int* incy);
 extern void _FT(dcopy)(int* n, double x[], int* incx, double y[],
         int* incy);
+extern void _FT(zcopy)(int *n, _Complex double x[], int *incx, _Complex double y[], int *incy );
+		      
 extern void _FT(dscal)(int* n, double* a, double x[], int* incx);
 
 /* BLAS-2 subroutines */

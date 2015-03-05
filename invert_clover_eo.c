@@ -52,7 +52,7 @@ int invert_clover_eo(spinor * const Even_new, spinor * const Odd_new,
 		     spinor * const Even, spinor * const Odd,
 		     const double precision, const int max_iter,
 		     const int solver_flag, const int rel_prec,solver_params_t solver_params,
-		     su3 *** gf, matrix_mult Qsq, matrix_mult Qm) {
+		     su3 *** gf, matrix_mult Qsq, matrix_mult Qm, const int id) {
   int iter;
 
   if(g_proc_id == 0 && g_debug_level > 0) {
@@ -107,7 +107,7 @@ int invert_clover_eo(spinor * const Even_new, spinor * const Odd_new,
                         solver_params.arpackcg_eps_sq1,precision,solver_params.arpackcg_res_eps_sq,rel_prec,max_iter,
                         solver_params.arpackcg_nev,solver_params.arpackcg_ncv,solver_params.arpackcg_eig_tol,solver_params.arpackcg_eig_maxiter,
                         solver_params.arpackcg_evals_kind,solver_params.arpackcg_comp_evecs,solver_params.use_acc,
-                        solver_params.cheb_k,solver_params.op_evmin,solver_params.op_evmax,solver_params.arpack_logfile);
+                        solver_params.cheb_k,solver_params.op_evmin,solver_params.op_evmax,solver_params.arpack_logfile, id);
 
        Qm(Odd_new, Odd_new);
     }
