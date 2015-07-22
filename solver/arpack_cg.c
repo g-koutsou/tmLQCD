@@ -74,6 +74,7 @@ amalloc(size_t size)
   return ptr;
 };
 
+#define MAGIC_NUMBER 99530512
 #define N_ARPACK_AUX_SPINORS 4
 #define N_ARPACK_AUX_VECTORS 2
 
@@ -99,7 +100,7 @@ static int ncurRHS_op[max_no_operators];
    different for each operator. */
 static int nconv_op[max_no_operators];
 
-static int arpack_initialized = 0;
+static int arpack_initialized;
 
 /* These could be allocated with each CG call, but
    we allocate once and reuse to save allocation overhead  */
@@ -122,12 +123,13 @@ init_arpack_cg(int N)
   for(int i=0; i<N_ARPACK_AUX_VECTORS; i++)
     arpack_aux_vectors[i] = amalloc(12*N*sizeof(_Complex double));
 
-  arpack_initialized = 1;
+  arpack_initialized = MAGIC_NUMBER;
   for(int i=0; i<max_no_operators; i++)
     ncurRHS_op[i] = 0;
 
   for(int i=0; i<max_no_operators; i++)
     nconv_op[i] = 0;
+  
   return;
 }
 
@@ -151,53 +153,259 @@ finalize_arpack_cg(void)
   return;
 }
 
-int arpack_cg(
-     //solver params
-     const int N,             /*(IN) Number of lattice sites for this process*/
-     const int nrhs,          /*(IN) Number of right-hand sides to be solved*/ 
-     const int nrhs1,         /*(IN) First number of right-hand sides to be solved using tolerance eps_sq1*/ 
-     spinor * const x,        /*(IN/OUT) initial guess on input, solution on output for this RHS*/
-     spinor * const b,        /*(IN) right-hand side*/
-     matrix_mult f,           /*(IN) f(s,r) computes s=A*r, i.e. matrix-vector multiply*/
-     const double eps_sq1,    /*(IN) squared tolerance of convergence of the linear system for systems 1 till nrhs1*/
-     const double eps_sq,     /*(IN) squared tolerance of convergence of the linear system for systems nrhs1+1 till nrhs*/
-     const double res_eps_sq, /*(IN) suqared tolerance for restarting cg */
-     const int rel_prec,      /*(IN) 0 for using absoute error for convergence
-                                     1 for using relative error for convergence*/
-     const int maxit,         /*(IN) Maximum allowed number of iterations to solution for the linear system*/
+int
+calc_evecs(const int N,
+	   matrix_mult f,
+	   const int nev,
+	   const int ncv,
+	   double arpack_eig_tol,         
+	   int arpack_eig_maxiter,        
+	   int kind,                      
+	   int comp_evecs,
+	   int acc,
+	   int cheb_k,   
+	   double emin,
+	   double emax,
+	   char *arpack_logfile,
+	   const int op_id
+	   )
+{
+  if(arpack_initialized != MAGIC_NUMBER)
+    init_arpack_cg(N);
+  
+  _Complex double *evecs = amalloc(ncv*12*N*sizeof(_Complex double));
+  _Complex double *evals = amalloc(ncv*sizeof(_Complex double));
+  
+  double et1 = gettime();
+  int info_arpack = 0;
+  int nconv = 0;
+  evals_arpack(N, nev, ncv, kind, acc, cheb_k, emin, emax,
+	       evals, evecs, arpack_eig_tol, arpack_eig_maxiter,
+	       f, &info_arpack, &nconv, arpack_logfile);
+  double et2 = gettime();
+  
+  if(info_arpack != 0){ //arpack didn't converge
+    if(g_proc_id == g_stdio_proc)
+      fprintf(stderr, "WARNING: ARPACK didn't converge. exiting..\n");
+    return -1;
+  }
+  
+  if(g_proc_id == g_stdio_proc)
+    {
+      fprintf(stdout, "ARPACK has computed %d eigenvectors\n", nconv);
+      fprintf(stdout, "ARPACK time: %+e\n", et2 - et1);
+    }
 
-     //parameters for arpack
-     const int nev,                 /*(IN) number of eigenvectors to be computed by arpack*/
-     const int ncv,                 /*(IN) size of the subspace used by arpack with the condition (nev+1) =< ncv*/
-     double arpack_eig_tol,         /*(IN) tolerance for computing eigenvalues with arpack */
-     int arpack_eig_maxiter,        /*(IN) maximum number of iterations to be used by arpack*/
-     int kind,                      /*(IN) 0 for eigenvalues with smallest real part "SR"
-                                           1 for eigenvalues with largest real part "LR"
-                                           2 for eigenvalues with smallest absolute value "SM"
-                                           3 for eigenvalues with largest absolute value "LM"
-                                           4 for eigenvalues with smallest imaginary part "SI"
-                                           5 for eigenvalues with largest imaginary part  "LI"*/
-     int comp_evecs,                /*(IN) 0 don't compute the eiegnvalues and their residuals of the original system 
-                                           1 compute the eigenvalues and the residuals for the original system (the orthonormal baiss
-                                             still be used in deflation and they are not overwritten).*/
-     int acc,                       /*(IN) 0 no polynomial acceleration
-                                           1 use polynomial acceleration*/
-     int cheb_k,                    /*(IN) degree of the Chebyshev polynomial (irrelevant if acc=0)*/
-     double emin,                      /*(IN) lower end of the interval where the acceleration will be used (irrelevant if acc=0)*/
-     double emax,                      /*(IN) upper end of the interval where the acceleration will be used (irrelevant if acc=0)*/
-     char *arpack_logfile,           /*(IN) file name to be used for printing out debugging information from arpack*/
-     const int op_id                 /* (IN) the operator ID. ARPACK will deflate for each new operator, and keep the
-					eigenvectors alive separately for different operatos. Useful for interleaving up and down
-					inversions */
+  evecs_op[op_id] = evecs;
+  evals_op[op_id] = evals;  
+  nconv_op[op_id] = nconv;
+  return nconv;
+}
+
+_Complex double *
+get_evecs_ptr(int op_id)
+{
+  return evecs_op[op_id];
+}
+
+_Complex double *
+get_evals_ptr(int op_id)
+{
+  return evals_op[op_id];
+}
+
+int
+get_nevs(int op_id)
+{
+  return nconv_op[op_id];
+}
+
+void
+set_evecs_ptr(int op_id, _Complex double *ptr)
+{
+  evecs_op[op_id] = ptr;
+  return;
+}
+
+void
+set_evals_ptr(int op_id, _Complex double *ptr)
+{
+  evals_op[op_id] = ptr;
+  return;
+}
+
+void
+set_nevs(int op_id, int n)
+{
+  nconv_op[op_id] = n;
+  return;
+}
+
+_Complex double *
+get_H(int N, int nconv, _Complex double *evecs, _Complex double *evals, matrix_mult f)
+{  
+#ifdef MPI
+  int parallel = 1;
+#else
+  int parallel = 0;
+#endif
+  _Complex double *H = amalloc(nconv*nconv*sizeof(_Complex double)); 
+  spinor *ax = arpack_aux_spinors[0];
+  spinor *r = arpack_aux_spinors[1];
+  
+  //compute the elements of the hermitian matrix H 
+  //leading dimension is nconv and active dimension is nconv
+  for(int i=0; i<nconv; i++)
+    {
+      assign_complex_to_spinor(r, &evecs[i*12*N], 12*N);
+      f(ax,r);
+      double c1 = scalar_prod(r, ax, N, parallel);
+      H[i+nconv*i] = creal(c1);  //diagonal should be real
+      for(int j=i+1; j<nconv; j++)
+	{
+	  assign_complex_to_spinor(r, &evecs[j*12*N], 12*N);
+	  c1 = scalar_prod(r, ax, N, parallel);
+	  H[j+nconv*i] = c1;
+	  H[i+nconv*j] = conj(c1); //enforce hermiticity
+	}
+    }
+  return H;
+}
+
+void
+print_ritz_vecs(_Complex double *H, _Complex double *evecs, matrix_mult f, int N, int nconv)
+{
+#ifdef MPI
+  int parallel = 1;
+#else
+  int parallel = 0;
+#endif
+  spinor *ax = arpack_aux_spinors[0];
+  spinor *r = arpack_aux_spinors[1];
+  spinor *s0 = arpack_aux_spinors[2];
+  spinor *s1 = arpack_aux_spinors[3];
+  _Complex double *z0 = arpack_aux_vectors[0];
+  _Complex double *H_aux = amalloc(nconv*nconv*sizeof(_Complex double));
+  
+  /* copy H into HU */
+  int nconv_sq = nconv*nconv;
+  int ONE = 1;
+  _FT(zcopy)(&nconv_sq, H, &ONE, H_aux, &ONE);
+	
+  /* compute eigenvalues and eigenvectors of HU*/
+  //SUBROUTINE ZHEEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK,INFO )
+  int zheev_lwork = 3*nconv;
+  _Complex double *zheev_work = amalloc(zheev_lwork*sizeof(_Complex double));
+  double *zheev_rwork = amalloc(3*nconv*sizeof(double));
+  double *hevals = amalloc(nconv*sizeof(double));
+  int zheev_info;
+  char cV='V', cU='U';
+  _FT(zheev)(&cV, &cU, &nconv, H_aux, &nconv, hevals, zheev_work, &zheev_lwork, zheev_rwork, &zheev_info, 1, 1);
+	
+  if(zheev_info != 0)
+    {
+      if(g_proc_id == g_stdio_proc) 
+	{
+	  fprintf(stderr,"Error in ZHEEV:, info =  %d\n",zheev_info); 
+	  fflush(stderr);
+	}
+      exit(1);
+    }
+  free(zheev_rwork);
+  free(zheev_work);
+	
+  //If you want to replace the schur (orthonormal) basis by eigen basis
+  //use something like this. It is better to use the schur basis because
+  //they are better conditioned. Use this part only to get the eigenvalues
+  //and their resduals for the operator (D^\daggerD)
+  //esize=(ncv-nconv)*12*N;
+  //Zrestart_X(evecs,12*N,HU,12*N,nconv,nconv,&evecs[nconv*N],esize);
+	
+  /* compute residuals and print out results */
+	
+  if(g_proc_id == g_stdio_proc)
+    {fprintf(stdout,"Ritz values of A and their residulas (||A*x-lambda*x||/||x||\n"); 
+      fprintf(stdout,"=============================================================\n");
+      fflush(stdout);}
+	
+  for(int i=0; i<nconv; i++)
+    {
+      int Nx12=12*N;
+      char cN='N';
+      _Complex double zero = 0., zone = 1.;
+      int ONE = 1;
+      _FT(zgemv)(&cN, &Nx12, &nconv, &zone, evecs, &Nx12,
+		 &H_aux[i*nconv], &ONE, &zero, z0, &ONE, 1);
+	    
+      assign_complex_to_spinor(r, z0, 12*N);	    
+      double norm0 = square_norm(r, N, parallel);
+            
+      f(ax,r);
+      mul_r(s0, hevals[i], r, N);
+      diff(s1, ax, s0, N);
+	    
+      double norm1 = square_norm(s1, N, parallel);
+      norm1 = sqrt(norm1/norm0);
+	    
+      if(g_proc_id == g_stdio_proc)
+	{
+	  fprintf(stdout, "Eval[%06d]: %22.15E rnorm: %22.15E\n", i, hevals[i], norm1);
+	  fflush(stdout);
+	}
+    }
+      
+  free(hevals);
+  free(H_aux);
+  return;
+}
+
+int arpack_cg(
+	      //solver params
+	      const int N,             /*(IN) Number of lattice sites for this process*/
+	      const int nrhs,          /*(IN) Number of right-hand sides to be solved*/ 
+	      const int nrhs1,         /*(IN) First number of right-hand sides to be solved using tolerance eps_sq1*/ 
+	      spinor * const x,        /*(IN/OUT) initial guess on input, solution on output for this RHS*/
+	      spinor * const b,        /*(IN) right-hand side*/
+	      matrix_mult f,           /*(IN) f(s,r) computes s=A*r, i.e. matrix-vector multiply*/
+	      const double eps_sq1,    /*(IN) squared tolerance of convergence of the linear system for systems 1 till nrhs1*/
+	      const double eps_sq,     /*(IN) squared tolerance of convergence of the linear system for systems nrhs1+1 till nrhs*/
+	      const double res_eps_sq, /*(IN) suqared tolerance for restarting cg */
+	      const int rel_prec,      /*(IN) 0 for using absoute error for convergence
+					 1 for using relative error for convergence*/
+	      const int maxit,         /*(IN) Maximum allowed number of iterations to solution for the linear system*/
+
+	      //parameters for arpack
+	      const int nev,                 /*(IN) number of eigenvectors to be computed by arpack*/
+	      const int ncv,                 /*(IN) size of the subspace used by arpack with the condition (nev+1) =< ncv*/
+	      double arpack_eig_tol,         /*(IN) tolerance for computing eigenvalues with arpack */
+	      int arpack_eig_maxiter,        /*(IN) maximum number of iterations to be used by arpack*/
+	      int kind,                      /*(IN) 0 for eigenvalues with smallest real part "SR"
+					       1 for eigenvalues with largest real part "LR"
+					       2 for eigenvalues with smallest absolute value "SM"
+					       3 for eigenvalues with largest absolute value "LM"
+					       4 for eigenvalues with smallest imaginary part "SI"
+					       5 for eigenvalues with largest imaginary part  "LI"*/
+	      int comp_evecs,                /*(IN) 0 don't compute the eiegnvalues and their residuals of the original system 
+					       1 compute the eigenvalues and the residuals for the original system (the orthonormal baiss
+					       still be used in deflation and they are not overwritten).*/
+	      int acc,                       /*(IN) 0 no polynomial acceleration
+					       1 use polynomial acceleration*/
+	      int cheb_k,                    /*(IN) degree of the Chebyshev polynomial (irrelevant if acc=0)*/
+	      double emin,                      /*(IN) lower end of the interval where the acceleration will be used (irrelevant if acc=0)*/
+	      double emax,                      /*(IN) upper end of the interval where the acceleration will be used (irrelevant if acc=0)*/
+	      char *arpack_logfile,           /*(IN) file name to be used for printing out debugging information from arpack*/
+	      const int op_id                 /* (IN) the operator ID. ARPACK will deflate for each new operator, and keep the
+						 eigenvectors alive separately for different operatos. Useful for interleaving up and down
+						 inversions */
 	      )
 { 
   //Static variables and arrays.
   int parallel;        /* for parallel processing of the scalar products */
-  #ifdef MPI
-    parallel=1;
-  #else
-    parallel=0;
-  #endif
+#ifdef MPI
+  parallel=1;
+#else
+  parallel=0;
+#endif
 
 
   /*-------------------------------------------------------------
@@ -211,215 +419,39 @@ int arpack_cg(
   _Complex double *H = H_op[op_id];
   _Complex double *H_aux = H_aux_op[op_id];
   _Complex double *initwork = initwork_op[op_id];
-  if(!arpack_initialized)
+  if(arpack_initialized != MAGIC_NUMBER)
     init_arpack_cg(N);
-
+  
   spinor *ax = arpack_aux_spinors[0];
   spinor *r = arpack_aux_spinors[1];
   spinor *s0 = arpack_aux_spinors[2];
   spinor *s1 = arpack_aux_spinors[3];
   _Complex double *z0 = arpack_aux_vectors[0];
   _Complex double *z1 = arpack_aux_vectors[1];
-  if(ncurRHS==0){
-    evecs = amalloc(ncv*12*N*sizeof(_Complex double));
-    evals = amalloc(ncv*sizeof(_Complex double));
-
-    double et1 = gettime();
-    int info_arpack = 0;
-    int nconv = 0;
-    evals_arpack(N, nev, ncv, kind, acc, cheb_k, emin, emax,
-		 evals, evecs, arpack_eig_tol, arpack_eig_maxiter,
-		 f, &info_arpack, &nconv, arpack_logfile);
-    double et2 = gettime();
-
-    if(info_arpack != 0){ //arpack didn't converge
-      if(g_proc_id == g_stdio_proc)
-        fprintf(stderr, "WARNING: ARPACK didn't converge. exiting..\n");
-      return -1;
-    }
-    
-    if(g_proc_id == g_stdio_proc)
-    {
-       fprintf(stdout, "ARPACK has computed %d eigenvectors\n", nconv);
-       fprintf(stdout, "ARPACK time: %+e\n", et2 - et1);
-    }
-    nconv_op[op_id] = nconv;
-    
-    H = amalloc(nconv*nconv*sizeof(_Complex double)); 
-    H_aux = amalloc(nconv*nconv*sizeof(_Complex double)); 
-    initwork = amalloc(nconv*sizeof(_Complex double));
-
-    //compute the elements of the hermitian matrix H 
-    //leading dimension is nconv and active dimension is nconv
-    for(int i=0; i<nconv; i++)
-    {
-      assign_complex_to_spinor(r, &evecs[i*12*N], 12*N);
-
-       f(ax,r);
-       double c1 = scalar_prod(r, ax, N, parallel);
-       H[i+nconv*i] = creal(c1);  //diagonal should be real
-       for(int j=i+1; j<nconv; j++)
-       {
-          assign_complex_to_spinor(r, &evecs[j*12*N], 12*N);
-          c1 = scalar_prod(r, ax, N, parallel);
-          H[j+nconv*i] = c1;
-          H[i+nconv*j] = conj(c1); //enforce hermiticity
-       }
-     }
-
-     //compute Ritz values and Ritz vectors if needed
+  if(ncurRHS == 0){
+    int nconv = nconv_op[op_id];
+    if(nconv == 0) {
+      nconv = calc_evecs(N, f, nev, ncv, arpack_eig_tol, arpack_eig_maxiter,
+			 kind, comp_evecs, acc, cheb_k, emin, emax, arpack_logfile, op_id);
+      nconv_op[op_id] = nconv;
+      evecs = evecs_op[op_id];
+      evals = evals_op[op_id];
+    } /* Else these should have been set with the set_evecs(), set_evals()
+	 and the set_nevs() functions defined above */
+    H_op[op_id] = get_H(N, nconv, evecs, evals, f);
+      
+    //compute Ritz values and Ritz vectors if needed
     if( (nconv>0) && (comp_evecs !=0))
       {
-	/* copy H into HU */
-	int nconv_sq = nconv*nconv;
-	int ONE = 1;
-	_FT(zcopy)(&nconv_sq, H, &ONE, H_aux, &ONE);
-	
-	/* compute eigenvalues and eigenvectors of HU*/
-	//SUBROUTINE ZHEEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK,INFO )
-	int zheev_lwork = 3*nconv;
-	_Complex double *zheev_work = amalloc(zheev_lwork*sizeof(_Complex double));
-	double *zheev_rwork = amalloc(3*nconv*sizeof(double));
-	double *hevals = amalloc(nconv*sizeof(double));
-	int zheev_info;
-	char cV='V', cU='U';
-	_FT(zheev)(&cV, &cU, &nconv, H_aux, &nconv, hevals, zheev_work, &zheev_lwork, zheev_rwork, &zheev_info, 1, 1);
-	
-	if(zheev_info != 0)
-	  {
-	    if(g_proc_id == g_stdio_proc) 
-	      {
-	        fprintf(stderr,"Error in ZHEEV:, info =  %d\n",zheev_info); 
-                fflush(stderr);
-	      }
-	    exit(1);
-	  }
-	free(zheev_rwork);
-	free(zheev_work);
-	
-	//If you want to replace the schur (orthonormal) basis by eigen basis
-	//use something like this. It is better to use the schur basis because
-	//they are better conditioned. Use this part only to get the eigenvalues
-	//and their resduals for the operator (D^\daggerD)
-	//esize=(ncv-nconv)*12*N;
-	//Zrestart_X(evecs,12*N,HU,12*N,nconv,nconv,&evecs[nconv*N],esize);
-	
-	/* compute residuals and print out results */
-	
-	if(g_proc_id == g_stdio_proc)
-	  {fprintf(stdout,"Ritz values of A and their residulas (||A*x-lambda*x||/||x||\n"); 
-	    fprintf(stdout,"=============================================================\n");
-	    fflush(stdout);}
-	
-	for(int i=0; i<nconv; i++)
-	  {
-	    int Nx12=12*N;
-	    char cN='N';
-	    _Complex double zero = 0., zone = 1.;
-	    int ONE = 1;
-	    _FT(zgemv)(&cN, &Nx12, &nconv, &zone, evecs, &Nx12,
-		       &H_aux[i*nconv], &ONE, &zero, z0, &ONE, 1);
-	    
-            assign_complex_to_spinor(r, z0, 12*N);	    
-            double norm0 = square_norm(r, N, parallel);
-            
-            f(ax,r);
-            mul_r(s0, hevals[i], r, N);
-            diff(s1, ax, s0, N);
-	    
-	    double norm1 = square_norm(s1, N, parallel);
-	    norm1 = sqrt(norm1/norm0);
-	    
-	    if(g_proc_id == g_stdio_proc)
-	      {
-		fprintf(stdout, "Eval[%06d]: %22.15E rnorm: %22.15E\n", i, hevals[i], norm1);
-		fflush(stdout);
-	      }
-	  }
-      
-	free(hevals);
-#ifdef WRITE_EVS
-	 for(int i=0; i < nconv; i++)
-	   {
-	     int size = 12*N;
-	     _Complex double zone = 1., zero = 0;
-	     char cN = 'N';
-	     int ONE = 1;
-	     _FT(zgemv)(&cN, &size, &nconv, &zone, evecs, &size,
-			&H_aux[(i+0)*nconv], &ONE, &zero, z0, &ONE, 1);
-	     
-	     assign_complex_to_spinor(s0, z0, size);
-	     WRITER *writer = NULL;
-	     int append = 0;
-	     char fname[256];	
-	     paramsPropagatorFormat *format = NULL;
-	     int precision = 32;
-	     int numb_flavs = 1;
-	     
-	     sprintf(fname, "ev.%04d.%05d", nstore, i);
-	     construct_writer(&writer, fname, append);
-
-
-	     format = construct_paramsPropagatorFormat(precision, numb_flavs);
-	     write_propagator_format(writer, format);
-	     free(format);	    
-
-	     memset(z1, '\0', size*sizeof(_Complex double));
-	     assign_complex_to_spinor(s1, z1,size);
-	     
-	     int status = write_spinor(writer, &s1, &s0, numb_flavs, precision);
-	     destruct_writer(writer);
-#if 1
-	     sprintf(fname, "ev.%04d.%05d.txt", nstore, i);
-	     FILE *fp = fopen(fname, "w");
-	     for(int t=0; t<T; t++)
-	       for(int z=0; z<LZ; z++)
-		 for(int y=0; y<LY; y++)
-		   for(int x=0; x<LX; x++) {		     
-		     int j = x + y + z + t;
-		     if(j%2 == 1) {
-		       int k = z + LZ*(y + LY*(x + LX*t));
-		       _Complex double *sp = &z0[(k/2)*12];
-		       for(int cs=0; cs<12; cs++)
-			 fprintf(fp,"%+e %+e\n", creal(sp[cs]), cimag(sp[cs]));
-		     }
-		   }
-	     fclose(fp);
-
-	     assign_complex_to_spinor(s0, z0, size);
-	     f(s1, s0);
-	     assign_spinor_to_complex(z0, s1, N);
-
-	     assign_complex_to_spinor(s0, z1, size);
-	     f(s1, s0);
-	     assign_spinor_to_complex(z1, s1, N);
-
-	     sprintf(fname, "Aev.%04d.%05d.txt", nstore, i);
-	     fp = fopen(fname, "w");
-	     for(int t=0; t<T; t++)
-	       for(int z=0; z<LZ; z++)
-		 for(int y=0; y<LY; y++)
-		   for(int x=0; x<LX; x++) {		     
-		     int j = x + y + z + t;
-		     if(j%2 == 1) {
-		       int k = z + LZ*(y + LY*(x + LX*t));
-		       _Complex double *sp = &z0[(k/2)*12];
-		       for(int cs=0; cs<12; cs++)
-			 fprintf(fp,"%+e %+e\n", creal(sp[cs]), cimag(sp[cs]));
-		     }
-		   }
-	     fclose(fp);
-#endif /* 0 */	     
-	   }
-#endif /* def WRITE_EVS */
+	print_ritz_vecs(H_op[op_id], evecs, f, N, nconv);
       }		//if( (nconv_arpack>0) && (comp_evecs !=0))
-
-    evecs_op[op_id] = evecs;
-    evals_op[op_id] = evals;
-    H_op[op_id] = H;
-    H_aux_op[op_id] = H_aux;
-    initwork_op[op_id] = initwork;
-  }		//if(ncurRHS==0)
+      
+    H_aux_op[op_id] = amalloc(nconv*nconv*sizeof(_Complex double));     
+    initwork_op[op_id] = amalloc(nconv*sizeof(_Complex double));
+    H = H_op[op_id];
+    H_aux = H_aux_op[op_id];
+    initwork = initwork_op[op_id];
+  }
   
   /* increment the RHS counter */
   ncurRHS = ncurRHS + 1; 
@@ -542,13 +574,13 @@ int arpack_cg(
   diff(r, b, ax, N);	/* r=b-A*x */	
   double normsq = square_norm(r, N, parallel);
   if(g_debug_level > 0 && g_proc_id == g_stdio_proc)
-  {
-    fprintf(stdout, "For this rhs:\n");
-    fprintf(stdout, "Total initCG Wallclock : %+e\n", wall_time_ini);
-    fprintf(stdout, "Total cg Wallclock : %+e\n", wall_time_cg);
-    fprintf(stdout, "Iterations: %-d\n", iters_tot); 
-    fprintf(stdout, "Actual Resid of LinSys  : %+e\n", normsq);
-  }
+    {
+      fprintf(stdout, "For this rhs:\n");
+      fprintf(stdout, "Total initCG Wallclock : %+e\n", wall_time_ini);
+      fprintf(stdout, "Total cg Wallclock : %+e\n", wall_time_cg);
+      fprintf(stdout, "Iterations: %-d\n", iters_tot); 
+      fprintf(stdout, "Actual Resid of LinSys  : %+e\n", normsq);
+    }
 
   //free memory if this was your last system to solve for this operator id
   if(ncurRHS == nrhs)

@@ -46,11 +46,18 @@ extern "C"
   int tmLQCD_invert(double * const propagator, double * const source,
 		    const int op_id, const int write_prop);
   int tmLQCD_finalise();
-
+  void tmLQCD_compute_eigenvs(const int op_id);
   int tmLQCD_get_gauge_field_pointer(double ** gf);
   int tmLQCD_get_mpi_params(tmLQCD_mpi_params * params);
   int tmLQCD_get_lat_params(tmLQCD_lat_params * params);
-  
+  _Complex double *tmLQCD_get_evecs_ptr(int);
+  _Complex double *tmLQCD_get_evals_ptr(int);
+  int tmLQCD_get_nevs(int);
+
+  void tmLQCD_set_evecs_ptr(int, _Complex double *);
+  void tmLQCD_set_evals_ptr(int, _Complex double *);
+  void tmLQCD_set_nevs(int, int);
+
 #ifdef __cplusplus
 }
 #endif

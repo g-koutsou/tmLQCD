@@ -242,6 +242,10 @@ int init_operators() {
 	optr->even_odd_flag = 1;
 	optr->applyDbQsq = &Qtm_pm_ndpsi;
       }
+      else if(optr->type == CLOVER) {
+	optr->even_odd_flag = 1;
+	optr->applyQsq = &Qsw_pm_psi;
+      }
     }
   }
   return(0);

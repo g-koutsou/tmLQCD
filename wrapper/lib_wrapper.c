@@ -46,6 +46,7 @@
 #endif
 #include <io/utils.h>
 #include <io/gauge.h>
+#include <solver/solver.h>
 #include "read_input.h"
 #include "mpi_init.h"
 #include "init/init.h"
@@ -203,6 +204,85 @@ int tmLQCD_read_gauge(const int nconfig) {
 #endif
   return(0);
 }
+
+void
+tmLQCD_compute_eigenvs(const int op_id)
+{
+  operator *optr = &operator_list[op_id];
+  solver_params_t *sp = &operator_list[op_id].solver_params;
+
+  g_kappa = optr->kappa;
+  boundary(g_kappa);
+
+  if(optr->type == TMWILSON || optr->type == WILSON || optr->type == CLOVER) {
+    g_mu = optr->mu;
+    g_c_sw = optr->c_sw;
+    if(optr->type == CLOVER) {
+      if (g_cart_id == 0 && g_debug_level > 1) {
+	printf("#\n# csw = %e, computing clover leafs\n", g_c_sw);
+      }
+      init_sw_fields(VOLUME);
+      sw_term( (const su3**) g_gauge_field, optr->kappa, optr->c_sw); 
+    }
+  }
+  
+  calc_evecs(VOLUME/2,
+	     optr->applyQsq,
+	     sp->arpackcg_nev,
+	     sp->arpackcg_ncv,
+	     sp->arpackcg_eig_tol,
+	     sp->arpackcg_eig_maxiter,
+	     sp->arpackcg_evals_kind,
+	     sp->arpackcg_comp_evecs,
+	     sp->use_acc,
+	     sp->cheb_k,
+	     sp->op_evmin,
+	     sp->op_evmax,
+	     sp->arpack_logfile,
+	     op_id);
+  return;
+}
+
+_Complex double *
+tmLQCD_get_evecs_ptr(int op_id)
+{
+  return get_evecs_ptr(op_id);
+}
+
+_Complex double *
+tmLQCD_get_evals_ptr(int op_id)
+{
+  return get_evals_ptr(op_id);
+}
+
+int
+tmLQCD_get_nevs(int op_id)
+{
+  return get_nevs(op_id);
+}
+
+
+void
+tmLQCD_set_evecs_ptr(int op_id, _Complex double *ptr)
+{
+  set_evecs_ptr(op_id, ptr);
+  return;
+}
+
+void
+tmLQCD_set_evals_ptr(int op_id, _Complex double *ptr)
+{
+  set_evals_ptr(op_id, ptr);
+  return;
+}
+
+void
+tmLQCD_set_nevs(int op_id, int n)
+{
+  set_nevs(op_id, n);
+  return;
+}
+
 
 
 int tmLQCD_invert(double * const propagator, double * const source, 

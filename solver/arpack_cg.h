@@ -31,6 +31,14 @@
 #include "solver/matrix_mult_typedef.h"
 #include "solver/eigenvalues_arpack.h"
 
+_Complex double *get_evecs_ptr(int);
+_Complex double *get_evals_ptr(int);
+int get_nevs(int);
+
+void set_evecs_ptr(int, _Complex double *);
+void set_evals_ptr(int, _Complex double *);
+void set_nevs(int, int);
+
 
 int arpack_cg(
 
