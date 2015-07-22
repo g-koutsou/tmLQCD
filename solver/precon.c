@@ -9,7 +9,7 @@
  ***********************************************************************/
 
 #include "solver/precon.h"
-
+#include <math.h>
 
 void cheb_poly_op(spinor * const R, spinor * const S, matrix_mult f, const int N, const double a, const double b, const int k, spinor *v1, spinor *v2)
 {

@@ -27,6 +27,7 @@
 #include "operator/Dov_proj.h"
 #include "gamma.h"
 #include "index_jd.h"
+#include "start.h"
 
 #include <io/gauge.h>
 #include <io/spinor.h>
