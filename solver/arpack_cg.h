@@ -38,7 +38,8 @@ int get_nevs(int);
 void set_evecs_ptr(int, _Complex double *);
 void set_evals_ptr(int, _Complex double *);
 void set_nevs(int, int);
-
+int calc_evecs(const int , matrix_mult , const int , const int , double , int ,
+	       int , int , int , int , double , double , char *, const int);
 
 int arpack_cg(
 

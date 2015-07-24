@@ -24,6 +24,7 @@
 #define MAIN_PROGRAM
 
 #include"lime.h"
+#include <unistd.h>
 #ifdef HAVE_CONFIG_H
 # include<config.h>
 #endif
