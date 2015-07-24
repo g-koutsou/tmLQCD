@@ -56,6 +56,9 @@
 #include "start.h"
 #include "operator.h"
 #include "linalg/convert_eo_to_lexic.h"
+#include "operator/Hopping_Matrix.h"
+#include "operator/clovertm_operators.h"
+#include "operator/clover_leaf.h"
 #include "include/tmLQCD.h"
 
 #ifdef HAVE_GPU
@@ -223,23 +226,24 @@ tmLQCD_compute_eigenvs(const int op_id)
       }
       init_sw_fields(VOLUME);
       sw_term( (const su3**) g_gauge_field, optr->kappa, optr->c_sw); 
+      sw_invert(EE, optr->mu);
     }
+
+    calc_evecs(VOLUME/2,
+	       optr->applyQsq,
+	       sp->arpackcg_nev,
+	       sp->arpackcg_ncv,
+	       sp->arpackcg_eig_tol,
+	       sp->arpackcg_eig_maxiter,
+	       sp->arpackcg_evals_kind,
+	       sp->arpackcg_comp_evecs,
+	       sp->use_acc,
+	       sp->cheb_k,
+	       sp->op_evmin,
+	       sp->op_evmax,
+	       sp->arpack_logfile,
+	       op_id);
   }
-  
-  calc_evecs(VOLUME/2,
-	     optr->applyQsq,
-	     sp->arpackcg_nev,
-	     sp->arpackcg_ncv,
-	     sp->arpackcg_eig_tol,
-	     sp->arpackcg_eig_maxiter,
-	     sp->arpackcg_evals_kind,
-	     sp->arpackcg_comp_evecs,
-	     sp->use_acc,
-	     sp->cheb_k,
-	     sp->op_evmin,
-	     sp->op_evmax,
-	     sp->arpack_logfile,
-	     op_id);
   return;
 }
 
