@@ -50,6 +50,103 @@
 
 #include "operator.h"
 
+/*  
+    similar to scalar_prod() but for complex vectors instead of spinors 
+*/
+static _Complex double
+vec_dot(int N, const _Complex double *S, const _Complex double *R)
+{
+  _Complex double ALIGN res = 0.0;
+#ifdef MPI
+  _Complex double ALIGN mres;
+#endif
+
+#ifdef OMP
+#pragma omp parallel
+  {
+  int thread_num = omp_get_thread_num();
+#endif
+
+  _Complex double ALIGN ds,tr,ts,tt,ks,kc;
+  const _Complex double *s,*r;
+
+  ks = 0.0;
+  kc = 0.0;
+
+#if (defined BGL && defined XLC)
+  __alignx(16, S);
+  __alignx(16, R);
+#endif
+
+#ifdef OMP
+#pragma omp for
+#endif
+  for (int ix = 0; ix < N; ix++)
+  {
+    s= S + ix;
+    r= R + ix;
+    
+    ds = (*r) * conj(*s);
+
+    /* Kahan Summation */
+    tr=ds+kc;
+    ts=tr+ks;
+    tt=ts-ks;
+    ks=ts;
+    kc=tr-tt;
+  }
+  kc=ks+kc;
+
+#ifdef OMP
+  g_omp_acc_cp[thread_num] = kc;
+
+  } /* OpenMP closing brace */
+
+  /* having left the parallel section, we can now sum up the Kahan
+     corrected sums from each thread into kc */
+  for(int i = 0; i < omp_num_threads; ++i)
+    res += g_omp_acc_cp[i];
+#else
+  res=kc;
+#endif
+
+#ifdef MPI
+  MPI_Allreduce(&res, &mres, 1, MPI_DOUBLE_COMPLEX, MPI_SUM, MPI_COMM_WORLD);
+  return(mres);
+#endif
+  return(res);
+}
+
+/*  
+    similar to assign_add_mul() but for complex vectors instead of spinors 
+*/
+void
+vec_axpy(const int N, const _Complex double c, _Complex double * const S, _Complex double * const R)
+{
+#ifdef OMP
+#pragma omp parallel
+  {
+#endif
+  _Complex double *r, *s;
+
+#ifdef OMP
+#pragma omp for
+#endif
+  for (int ix=0; ix<N; ix++)
+  {
+    r=(_Complex double *) R + ix;
+    s=(_Complex double *) S + ix;
+
+    (*r) += c * (*s);
+  }
+  
+#ifdef OMP
+  } /* OpenMP closing brace */
+#endif
+
+}
+
+
 static void *
 amalloc(size_t size)
 {
@@ -493,7 +590,8 @@ int arpack_cg(
 	  /*r0=b-Ax0*/
 	  f(ax, x); /*ax = A*x */
 	  diff(r, b, ax, N);  /* r=b-A*x */
-	  
+
+#if 0 /* Naive way of getting guess. H is assumed dense, though it is practically diagonal */
 	  /* x = x + evecs*inv(H)*evecs'*r */
 	  for(int i=0; i < nconv; i++)
 	    {
@@ -504,10 +602,42 @@ int arpack_cg(
 	  /* solve the linear system H y = c */
 	  int nconv_sq = nconv*nconv;
 	  int ONE = 1;
+
+	  
 	  _FT(zcopy) (&nconv_sq, H, &ONE, H_aux, &ONE); /* copy H into H_aux */
+	  
 	  int IPIV[nconv];
 	  int info_lapack;
+
+#if 0
+	  {
+	    FILE *fp = fopen("H.dat","w");
+	    for(int ic=0; ic<nconv; ic++) {
+	      for(int jc=0; jc<nconv; jc++)
+		fprintf(fp, "  %+16.12e%+16.12ej  ", creal(H[jc + ic*nconv]), cimag(H[jc + ic*nconv]));
+	      fprintf(fp, "\n");
+	    }
+	    fclose(fp);
+	  }
+
+	  {
+	    FILE *fp = fopen("b.dat","w");
+	    for(int ic=0; ic<nconv; ic++)
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(initwork[ic]), cimag(initwork[ic]));	    
+	    fclose(fp);
+	  }
+#endif
+	  
 	  _FT(zgesv) (&nconv, &ONE, H_aux, &nconv, IPIV, initwork, &nconv, &info_lapack);
+
+#if 0
+	  {
+	    FILE *fp = fopen("H^{-1}b.dat","w");
+	    for(int ic=0; ic<nconv; ic++)
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(initwork[ic]), cimag(initwork[ic]));	    
+	    fclose(fp);
+	  }
+#endif
 	  
 	  if(info_lapack != 0)
 	    {
@@ -524,7 +654,53 @@ int arpack_cg(
 	      assign_complex_to_spinor(s0, &evecs[i*12*N], 12*N);
 	      assign_add_mul(x, s0, initwork[i], N);
 	    }
+#endif /* End section with naive guess calculation */
 
+#if 1 /* What follows assumes a diagonal H and so should be more optimal for computing the initial guess */
+
+	  /* Initialize z1 to x0 */
+	  assign_spinor_to_complex(z1, x, N);
+
+	  /* Initialize z0 to r */
+	  assign_spinor_to_complex(z0, r, N);
+
+	  for(int i=0; i<nconv; i++) {
+	    _Complex double udotr = vec_dot(12*N, &evecs[i*12*N], z0);
+	    udotr = udotr / evals[i];
+	    vec_axpy(12*N, udotr, &evecs[i*12*N], z1);
+	  }
+	    
+	  /* Set x to accumulated guess */
+	  assign_complex_to_spinor(x, z1, 12*N);
+	  
+#endif /* End section with optimized guess calculation */
+
+#if 0
+	  {
+	    char *fname;
+	    asprintf(&fname, "x%04d.dat", ncurRHS);
+	    FILE *fp = fopen(fname,"w");
+	    for(int i=0; i<N; i++) {
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s0.c0), cimag(x[i].s0.c0));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s0.c1), cimag(x[i].s0.c1));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s0.c2), cimag(x[i].s0.c2));
+							           	              
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s1.c0), cimag(x[i].s1.c0));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s1.c1), cimag(x[i].s1.c1));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s1.c2), cimag(x[i].s1.c2));
+							           	              
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s2.c0), cimag(x[i].s2.c0));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s2.c1), cimag(x[i].s2.c1));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s2.c2), cimag(x[i].s2.c2));
+							           	              
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s3.c0), cimag(x[i].s3.c0));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s3.c1), cimag(x[i].s3.c1));
+	      fprintf(fp, "  %+16.12e%+16.12ej\n", creal(x[i].s3.c2), cimag(x[i].s3.c2));
+	    }
+	    fclose(fp);
+	  }
+#endif
+	  
 	  /* compute elapsed time and add to accumulator */
 	  t0 = gettime() - t0;
 	  wall_time_ini += t0;

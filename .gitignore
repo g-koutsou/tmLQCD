@@ -1,8 +1,15 @@
+config.h
+config.status
+invert
+hmc_tm
+benchmark
+offline_measurement
 TAGS
 autom4te.cache/
 configure
 git_hash.h
 read_input.c
+*.a
 *.d
 *.o
 *~
