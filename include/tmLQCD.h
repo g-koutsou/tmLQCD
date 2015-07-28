@@ -26,6 +26,9 @@
 
 #ifndef _TMLQCD_H
 #define _TMLQCD_H
+#ifdef MPI
+#include <mpi.h>
+#endif
 
 #ifdef __cplusplus
 extern "C"
@@ -39,6 +42,9 @@ extern "C"
   typedef struct {
     unsigned int nproc, nproc_t, nproc_x, nproc_y, nproc_z, cart_id, proc_id, time_rank, omp_num_threads;
     unsigned int proc_coords[4];
+    #ifdef MPI
+    MPI_Comm cart_comm;
+    #endif
   } tmLQCD_mpi_params;
 
   int tmLQCD_invert_init(int argc, char *argv[], const int verbose);
