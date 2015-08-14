@@ -281,10 +281,9 @@ tmLQCD_get_nevs(int op_id)
   return get_nevs(op_id);
 }
 
-
 void
 tmLQCD_set_evecs_ptr(int op_id, _Complex double *ptr)
-{
+{  
   set_evecs_ptr(op_id, ptr);
   return;
 }
@@ -298,12 +297,25 @@ tmLQCD_set_evals_ptr(int op_id, _Complex double *ptr)
 
 void
 tmLQCD_set_nevs(int op_id, int n)
-{
+{  
   set_nevs(op_id, n);
   return;
 }
 
-
+void
+tmLQCD_arpack_cg_init()
+{
+  int even_odd_flag = 1;
+  for(int i=0; i<no_operators; i++)
+    if(operator_list[i].even_odd_flag == 0)
+      even_odd_flag = 0;
+  
+  int N = VOLUME;
+  if(even_odd_flag == 1)
+    N = VOLUME/2;
+  init_arpack_cg(N);
+  return;
+}
 
 int tmLQCD_invert(double * const propagator, double * const source, 
 		  const int op_id, const int write_prop) {

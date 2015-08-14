@@ -107,29 +107,30 @@ static int arpack_initialized;
 static spinor *arpack_aux_spinors[N_ARPACK_AUX_SPINORS];
 static _Complex double *arpack_aux_vectors[N_ARPACK_AUX_VECTORS];
 
-static void
+void
 init_arpack_cg(int N)
 {
-  /* leading dimension for spinor vectors */
-  size_t LDN;
-  if(N==VOLUME)
-    LDN = VOLUMEPLUSRAND;
-  else
-    LDN = VOLUMEPLUSRAND/2; 
+  if(arpack_initialized != MAGIC_NUMBER) {
+    /* leading dimension for spinor vectors */
+    size_t LDN;
+    if(N==VOLUME)
+      LDN = VOLUMEPLUSRAND;
+    else
+      LDN = VOLUMEPLUSRAND/2; 
 
-  for(int i=0; i<N_ARPACK_AUX_SPINORS; i++)
-    arpack_aux_spinors[i] = amalloc(LDN*sizeof(spinor));  
+    for(int i=0; i<N_ARPACK_AUX_SPINORS; i++)
+      arpack_aux_spinors[i] = amalloc(LDN*sizeof(spinor));  
 
-  for(int i=0; i<N_ARPACK_AUX_VECTORS; i++)
-    arpack_aux_vectors[i] = amalloc(12*N*sizeof(_Complex double));
+    for(int i=0; i<N_ARPACK_AUX_VECTORS; i++)
+      arpack_aux_vectors[i] = amalloc(12*N*sizeof(_Complex double));
 
-  arpack_initialized = MAGIC_NUMBER;
-  for(int i=0; i<max_no_operators; i++)
-    ncurRHS_op[i] = 0;
+    arpack_initialized = MAGIC_NUMBER;
+    for(int i=0; i<max_no_operators; i++)
+      ncurRHS_op[i] = 0;
 
-  for(int i=0; i<max_no_operators; i++)
-    nconv_op[i] = 0;
-  
+    for(int i=0; i<max_no_operators; i++)
+      nconv_op[i] = 0;
+  }  
   return;
 }
 
@@ -236,7 +237,7 @@ set_evals_ptr(int op_id, _Complex double *ptr)
 
 void
 set_nevs(int op_id, int n)
-{
+{  
   nconv_op[op_id] = n;
   return;
 }

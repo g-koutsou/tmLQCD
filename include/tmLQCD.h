@@ -57,6 +57,7 @@ extern "C"
   void tmLQCD_set_evecs_ptr(int, _Complex double *);
   void tmLQCD_set_evals_ptr(int, _Complex double *);
   void tmLQCD_set_nevs(int, int);
+  void tmLQCD_arpack_cg_init();
 
 #ifdef __cplusplus
 }

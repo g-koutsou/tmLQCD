@@ -41,6 +41,7 @@ void set_nevs(int, int);
 int calc_evecs(const int , matrix_mult , const int , const int , double , int ,
 	       int , int , int , int , double , double , char *, const int);
 
+void init_arpack_cg(int);
 int arpack_cg(
 
      //solver params
