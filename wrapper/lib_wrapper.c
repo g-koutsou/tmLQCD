@@ -213,37 +213,53 @@ tmLQCD_compute_eigenvs(const int op_id)
 {
   operator *optr = &operator_list[op_id];
   solver_params_t *sp = &operator_list[op_id].solver_params;
-
+  int even_odd_flag = operator_list[op_id].even_odd_flag;
+  
   g_kappa = optr->kappa;
   boundary(g_kappa);
 
   if(optr->type == TMWILSON || optr->type == WILSON || optr->type == CLOVER) {
-    g_mu = optr->mu;
-    g_c_sw = optr->c_sw;
     if(optr->type == CLOVER) {
       if (g_cart_id == 0 && g_debug_level > 1) {
 	printf("#\n# csw = %e, computing clover leafs\n", g_c_sw);
       }
       init_sw_fields(VOLUME);
       sw_term( (const su3**) g_gauge_field, optr->kappa, optr->c_sw); 
-      sw_invert(EE, optr->mu);
     }
 
-    calc_evecs(VOLUME/2,
-	       optr->applyQsq,
-	       sp->arpackcg_nev,
-	       sp->arpackcg_ncv,
-	       sp->arpackcg_eig_tol,
-	       sp->arpackcg_eig_maxiter,
-	       sp->arpackcg_evals_kind,
-	       sp->arpackcg_comp_evecs,
-	       sp->use_acc,
-	       sp->cheb_k,
-	       sp->op_evmin,
-	       sp->op_evmax,
-	       sp->arpack_logfile,
-	       op_id);
+    if(optr->type != CLOVER) {
+      if(use_preconditioning){
+	g_precWS=(void*)optr->precWS;
+      }
+      else {
+	g_precWS=NULL;
+      }
+    }
+    else {
+      /* this must be EE here!   */
+      /* to match clover_inv in Qsw_psi */
+      sw_invert(EE, optr->mu);
+    }
   }
+
+  int N = VOLUME;
+  if(even_odd_flag == 1)
+    N = VOLUME/2;
+  
+  calc_evecs(N,
+	     optr->applyQsq,
+	     sp->arpackcg_nev,
+	     sp->arpackcg_ncv,
+	     sp->arpackcg_eig_tol,
+	     sp->arpackcg_eig_maxiter,
+	     sp->arpackcg_evals_kind,
+	     sp->arpackcg_comp_evecs,
+	     sp->use_acc,
+	     sp->cheb_k,
+	     sp->op_evmin,
+	     sp->op_evmax,
+	     sp->arpack_logfile,
+	     op_id);
   return;
 }
 
