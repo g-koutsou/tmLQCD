@@ -592,7 +592,7 @@ int arpack_cg(
 	  f(ax, x); /*ax = A*x */
 	  diff(r, b, ax, N);  /* r=b-A*x */
 
-#if 0 /* Naive way of getting guess. H is assumed dense, though it is practically diagonal */
+#if 1 /* Naive way of getting guess. H is assumed dense, though it is practically diagonal */
 	  /* x = x + evecs*inv(H)*evecs'*r */
 	  for(int i=0; i < nconv; i++)
 	    {
@@ -657,7 +657,7 @@ int arpack_cg(
 	    }
 #endif /* End section with naive guess calculation */
 
-#if 1 /* What follows assumes a diagonal H and so should be more optimal for computing the initial guess */
+#if 0 /* What follows assumes a diagonal H and so should be more optimal for computing the initial guess */
 
 	  /* Initialize z1 to x0 */
 	  assign_spinor_to_complex(z1, x, N);
