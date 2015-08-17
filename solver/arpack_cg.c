@@ -177,8 +177,9 @@ amalloc(size_t size)
 
 /* These are needed across CG calls, one for each operator, and their
    values need to remain unchanged once set */
-static _Complex double *evecs_op[max_no_operators];
-static _Complex double *evals_op[max_no_operators];
+static _Complex double *evecs_op[max_no_operators]; 
+static _Complex double *evals_op[max_no_operators];  /* Eigenvalues of polynomial op */
+static _Complex double *hevals_op[max_no_operators]; /* Eigenvalues of op */
 static _Complex double *H_op[max_no_operators];
 
 /* These are needed across CG calls, one for each operator. Their
@@ -251,7 +252,89 @@ finalize_arpack_cg(void)
   return;
 }
 
-int
+
+_Complex double *
+get_H(int N, int nconv, _Complex double *evecs, _Complex double *evals, matrix_mult f)
+{  
+#ifdef MPI
+  int parallel = 1;
+#else
+  int parallel = 0;
+#endif
+  _Complex double *H = amalloc(nconv*nconv*sizeof(_Complex double)); 
+  spinor *ax = arpack_aux_spinors[0];
+  spinor *r = arpack_aux_spinors[1];
+  
+  //compute the elements of the hermitian matrix H 
+  //leading dimension is nconv and active dimension is nconv
+  for(int i=0; i<nconv; i++)
+    {
+      assign_complex_to_spinor(r, &evecs[i*12*N], 12*N);
+      f(ax,r);
+      double c1 = scalar_prod(r, ax, N, parallel);
+      H[i+nconv*i] = creal(c1);  //diagonal should be real
+      for(int j=i+1; j<nconv; j++)
+	{
+	  assign_complex_to_spinor(r, &evecs[j*12*N], 12*N);
+	  c1 = scalar_prod(r, ax, N, parallel);
+	  H[j+nconv*i] = c1;
+	  H[i+nconv*j] = conj(c1); //enforce hermiticity
+	}
+    }
+  return H;
+}
+
+_Complex double *
+get_hevals(_Complex double *H, _Complex double *evecs, int N, int nconv)
+{
+#ifdef MPI
+  int parallel = 1;
+#else
+  int parallel = 0;
+#endif
+  spinor *ax = arpack_aux_spinors[0];
+  spinor *r = arpack_aux_spinors[1];
+  spinor *s0 = arpack_aux_spinors[2];
+  spinor *s1 = arpack_aux_spinors[3];
+  _Complex double *z0 = arpack_aux_vectors[0];
+  _Complex double *H_aux = amalloc(nconv*nconv*sizeof(_Complex double));
+  
+  /* copy H into HU */
+  int nconv_sq = nconv*nconv;
+  int ONE = 1;
+  _FT(zcopy)(&nconv_sq, H, &ONE, H_aux, &ONE);
+	
+  /* compute eigenvalues and eigenvectors of HU*/
+  //SUBROUTINE ZHEEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK,INFO )
+  int zheev_lwork = 3*nconv;
+  _Complex double *zheev_work = amalloc(zheev_lwork*sizeof(_Complex double));
+  double *zheev_rwork = amalloc(3*nconv*sizeof(double));
+  double *hevals = amalloc(nconv*sizeof(double));
+  int zheev_info;
+  char cV='V', cU='U';
+  _FT(zheev)(&cV, &cU, &nconv, H_aux, &nconv, hevals, zheev_work, &zheev_lwork, zheev_rwork, &zheev_info, 1, 1);
+	
+  if(zheev_info != 0)
+    {
+      if(g_proc_id == g_stdio_proc) 
+	{
+	  fprintf(stderr,"Error in ZHEEV:, info =  %d\n",zheev_info); 
+	  fflush(stderr);
+	}
+      exit(1);
+    }
+  free(zheev_rwork);
+  free(zheev_work);
+  free(H_aux);
+
+  _Complex double *hevals_cplx = amalloc(nconv*sizeof(_Complex double));
+  for(int i=0; i<nconv; i++)
+    hevals_cplx[i] = hevals[i] + _Complex_I*0;
+  free(hevals);
+  return hevals_cplx;
+}
+
+static int
 calc_evecs(const int N,
 	   matrix_mult f,
 	   const int nev,
@@ -300,6 +383,32 @@ calc_evecs(const int N,
   return nconv;
 }
 
+void
+arpack_evs(const int N,
+	   matrix_mult f,
+	   const int nev,
+	   const int ncv,
+	   double arpack_eig_tol,         
+	   int arpack_eig_maxiter,        
+	   int kind,                      
+	   int comp_evecs,
+	   int acc,
+	   int cheb_k,   
+	   double emin,
+	   double emax,
+	   char *arpack_logfile,
+	   const int op_id
+	   )
+{
+  int nconv = calc_evecs(N, f, nev, ncv, arpack_eig_tol, arpack_eig_maxiter,
+			 kind, comp_evecs, acc, cheb_k, emin, emax, arpack_logfile, op_id);
+  H_op[op_id] = get_H(N, nconv, evecs_op[op_id], evals_op[op_id], f);
+  hevals_op[op_id] = get_hevals(H_op[op_id], evecs_op[op_id], N, nconv);
+  
+  return;
+}
+
+
 _Complex double *
 get_evecs_ptr(int op_id)
 {
@@ -307,9 +416,9 @@ get_evecs_ptr(int op_id)
 }
 
 _Complex double *
-get_evals_ptr(int op_id)
+get_hevals_ptr(int op_id)
 {
-  return evals_op[op_id];
+  return hevals_op[op_id];
 }
 
 int
@@ -326,50 +435,12 @@ set_evecs_ptr(int op_id, _Complex double *ptr)
 }
 
 void
-set_evals_ptr(int op_id, _Complex double *ptr)
-{
-  evals_op[op_id] = ptr;
-  return;
-}
-
-void
 set_nevs(int op_id, int n)
 {  
   nconv_op[op_id] = n;
   return;
 }
-
-_Complex double *
-get_H(int N, int nconv, _Complex double *evecs, _Complex double *evals, matrix_mult f)
-{  
-#ifdef MPI
-  int parallel = 1;
-#else
-  int parallel = 0;
-#endif
-  _Complex double *H = amalloc(nconv*nconv*sizeof(_Complex double)); 
-  spinor *ax = arpack_aux_spinors[0];
-  spinor *r = arpack_aux_spinors[1];
   
-  //compute the elements of the hermitian matrix H 
-  //leading dimension is nconv and active dimension is nconv
-  for(int i=0; i<nconv; i++)
-    {
-      assign_complex_to_spinor(r, &evecs[i*12*N], 12*N);
-      f(ax,r);
-      double c1 = scalar_prod(r, ax, N, parallel);
-      H[i+nconv*i] = creal(c1);  //diagonal should be real
-      for(int j=i+1; j<nconv; j++)
-	{
-	  assign_complex_to_spinor(r, &evecs[j*12*N], 12*N);
-	  c1 = scalar_prod(r, ax, N, parallel);
-	  H[j+nconv*i] = c1;
-	  H[i+nconv*j] = conj(c1); //enforce hermiticity
-	}
-    }
-  return H;
-}
-
 void
 print_ritz_vecs(_Complex double *H, _Complex double *evecs, matrix_mult f, int N, int nconv)
 {
@@ -537,13 +608,14 @@ int arpack_cg(
     } /* Else these should have been set with the set_evecs(), set_evals()
 	 and the set_nevs() functions defined above */
     H_op[op_id] = get_H(N, nconv, evecs, evals, f);
-      
+    hevals_op[op_id] = get_hevals(H_op[op_id], evecs, N, nconv);
+    
     //compute Ritz values and Ritz vectors if needed
     if( (nconv>0) && (comp_evecs !=0))
       {
 	print_ritz_vecs(H_op[op_id], evecs, f, N, nconv);
       }		//if( (nconv_arpack>0) && (comp_evecs !=0))
-      
+    
     H_aux_op[op_id] = amalloc(nconv*nconv*sizeof(_Complex double));     
     initwork_op[op_id] = amalloc(nconv*sizeof(_Complex double));
     H = H_op[op_id];
@@ -767,6 +839,7 @@ int arpack_cg(
       free(H);
       free(H_aux);
       free(initwork);
+      free(hevals_op[op_id]);
       ncurRHS = 0; 
       nconv = 0;
     }

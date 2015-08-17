@@ -245,8 +245,8 @@ tmLQCD_compute_eigenvs(const int op_id)
   int N = VOLUME;
   if(even_odd_flag == 1)
     N = VOLUME/2;
-  
-  calc_evecs(N,
+
+  arpack_evs(N,
 	     optr->applyQsq,
 	     sp->arpackcg_nev,
 	     sp->arpackcg_ncv,
@@ -260,6 +260,7 @@ tmLQCD_compute_eigenvs(const int op_id)
 	     sp->op_evmax,
 	     sp->arpack_logfile,
 	     op_id);
+  
   return;
 }
 
@@ -272,7 +273,7 @@ tmLQCD_get_evecs_ptr(int op_id)
 _Complex double *
 tmLQCD_get_evals_ptr(int op_id)
 {
-  return get_evals_ptr(op_id);
+  return get_hevals_ptr(op_id);
 }
 
 int
@@ -285,13 +286,6 @@ void
 tmLQCD_set_evecs_ptr(int op_id, _Complex double *ptr)
 {  
   set_evecs_ptr(op_id, ptr);
-  return;
-}
-
-void
-tmLQCD_set_evals_ptr(int op_id, _Complex double *ptr)
-{
-  set_evals_ptr(op_id, ptr);
   return;
 }
 

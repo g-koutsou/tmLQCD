@@ -32,14 +32,13 @@
 #include "solver/eigenvalues_arpack.h"
 
 _Complex double *get_evecs_ptr(int);
-_Complex double *get_evals_ptr(int);
+_Complex double *get_hevals_ptr(int);
 int get_nevs(int);
 
 void set_evecs_ptr(int, _Complex double *);
-void set_evals_ptr(int, _Complex double *);
 void set_nevs(int, int);
-int calc_evecs(const int , matrix_mult , const int , const int , double , int ,
-	       int , int , int , int , double , double , char *, const int);
+void arpack_evs(const int , matrix_mult , const int , const int , double , int ,
+		int , int , int , int , double , double , char *, const int);
 
 void init_arpack_cg(int);
 int arpack_cg(
