@@ -63,6 +63,15 @@ void evals_arpack(
                 1 use acceleration by computing the eigenvectors of a shifted-normalized chebyshev polynomial
   cheb_k   : (IN) degree of the chebyshev polynomial to be used for acceleration (irrelevant when use_acc=0 and init_resid_arpack=0)
   amin,amax: (IN) bounds of the interval [amin,amax] for the acceleration polynomial (irrelevant when use_acc=0 and init_resid_arpack=0)
+  store_basis: (IN) option to store basis vectors to disk such that they can be read later
+                    0 don't store bais vectors
+                    1 store basis vectors
+  basis_fname: (IN) file name used to store the basis vectors
+                    file names will be of the format
+                    basis_fname.xxxxx where xxxxx will be the basis vector number with leading zeros
+  basis_prec : (IN) precision used to write the basis vectors
+                    0 single precision
+                    1 double precision
   evals : (OUT) array of size nev+1 which has the computed nev Ritz values
   v     : computed eigenvectors. Size is n*ncv spinors.
   tol    : Requested tolerance for the accuracy of the computed eigenvectors.

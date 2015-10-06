@@ -113,7 +113,9 @@ int write_eospinor(spinor * const s, char * filename,
 #ifdef MPI
 	  MPI_Cart_rank(g_cart_grid, coords, &id);
 #endif
-	  i = g_lexic2eosub[ g_ipt[t][X][Y][Z] ];
+          if(g_cart_id == id){
+	    i = g_lexic2eosub[ g_ipt[t][X][Y][Z] ];
+          }
 	  if((t+X+Y+Z+g_proc_coords[3]*LZ+g_proc_coords[2]*LY 
 	      + g_proc_coords[0]*T+g_proc_coords[1]*LX)%2 == 0) {
 	    if(g_cart_id == 0) {

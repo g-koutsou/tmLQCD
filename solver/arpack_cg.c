@@ -43,11 +43,8 @@
 #include "solver_field.h"
 #include "solver/arpack_cg.h"
 #include "solver/cg_her.h"
-#if (defined WRITE_EVS)
-# include "io/spinor.h"
-# include "read_input.h"
-#endif
-
+#include "io/spinor.h"
+#include "read_input.h"
 #include "operator.h"
 
 static void *
@@ -185,13 +182,22 @@ int arpack_cg(
      int cheb_k,                    /*(IN) degree of the Chebyshev polynomial (irrelevant if acc=0)*/
      double emin,                      /*(IN) lower end of the interval where the acceleration will be used (irrelevant if acc=0)*/
      double emax,                      /*(IN) upper end of the interval where the acceleration will be used (irrelevant if acc=0)*/
+     int read_basis,               /*(IN) 0 compute deflation basis using arpack, 1 read deflation basis from disk */
+     int store_basis,              /*(IN) option to store basis vectors to disk such that they can be read later
+                                          0 don't store basis vectors
+                                          1 store basis vectors */
+     char *basis_fname,            /*(IN)file name used to read/store the basis vectors
+                                         file names will be of the format
+                                         basis_fname.xxxxx where xxxxx will be the basis vector number with leading zeros */
+     int basis_prec,               /*(IN)precision used to write the basis vectors
+                                         0 single precision
+                                         1 double precision*/
      char *arpack_logfile,           /*(IN) file name to be used for printing out debugging information from arpack*/
      const int op_id                 /* (IN) the operator ID. ARPACK will deflate for each new operator, and keep the
 					eigenvectors alive separately for different operatos. Useful for interleaving up and down
 					inversions */
-	      )
+     )
 { 
-  //Static variables and arrays.
   int parallel;        /* for parallel processing of the scalar products */
   #ifdef MPI
     parallel=1;
@@ -204,7 +210,6 @@ int arpack_cg(
   //if this is the first right hand side, allocate memory, 
   //call arpack, and compute resiudals of eigenvectors if needed
   //-------------------------------------------------------------*/ 
-  
   int ncurRHS = ncurRHS_op[op_id];
   _Complex double *evecs = evecs_op[op_id];
   _Complex double *evals = evals_op[op_id];
@@ -221,28 +226,113 @@ int arpack_cg(
   _Complex double *z0 = arpack_aux_vectors[0];
   _Complex double *z1 = arpack_aux_vectors[1];
   if(ncurRHS==0){
+    int nconv = 0;
     evecs = amalloc(ncv*12*N*sizeof(_Complex double));
     evals = amalloc(ncv*sizeof(_Complex double));
 
-    double et1 = gettime();
-    int info_arpack = 0;
-    int nconv = 0;
-    evals_arpack(N, nev, ncv, kind, acc, cheb_k, emin, emax,
-		 evals, evecs, arpack_eig_tol, arpack_eig_maxiter,
-		 f, &info_arpack, &nconv, arpack_logfile);
-    double et2 = gettime();
+    int LDN;
+    if(N==VOLUME)
+      LDN = VOLUMEPLUSRAND;
+    else
+      LDN = VOLUMEPLUSRAND/2; 
 
-    if(info_arpack != 0){ //arpack didn't converge
-      if(g_proc_id == g_stdio_proc)
-        fprintf(stderr, "WARNING: ARPACK didn't converge. exiting..\n");
-      return -1;
+    spinor *vec_even;
+    spinor *vec_odd;
+    if(read_basis || store_basis) {
+      vec_even = amalloc(LDN*sizeof(spinor));  
+      vec_odd  = amalloc(LDN*sizeof(spinor));      
     }
     
-    if(g_proc_id == g_stdio_proc)
-    {
-       fprintf(stdout, "ARPACK has computed %d eigenvectors\n", nconv);
-       fprintf(stdout, "ARPACK time: %+e\n", et2 - et1);
+    if(read_basis) {
+      double et1 = gettime();
+      nconv = nev;
+       for(int j=0; j<nev; j++) {
+	 int status;
+	 char filename[512], *header_type = NULL; 
+	 READER *reader=NULL;
+	 uint64_t bytes;
+	 sprintf(filename, "%s.%05d", basis_fname, j);
+	 construct_reader(&reader,filename); 
+	 DML_Checksum checksum;
+
+	 /* Find the desired binary data*/
+	 while ((status = ReaderNextRecord(reader)) != LIME_EOF) {
+	   if (status != LIME_SUCCESS){
+	     fprintf(stderr, "ReaderNextRecord returned status %d.\n", status);
+	     break;
+	   }
+	   header_type = ReaderType(reader);
+	   if (strcmp("scidac-binary-data", header_type) == 0) {
+	     break;
+	   }
+	 }
+	 
+	 if (status == LIME_EOF) {
+	   fprintf(stderr, "Unable to find requested LIME record scidac-binary-data in file %s.\nEnd of file reached before record was found.\n", filename);
+	   return(-5);
+	 }
+	 bytes = ReaderBytes(reader);
+	 int prec = 0;
+	 if ((int)bytes == LX * g_nproc_x * LY * g_nproc_y * LZ * g_nproc_z * T * g_nproc_t * sizeof(spinor)) {
+	   prec = 64;
+	 } else {
+	   if ((int)bytes == LX * g_nproc_x * LY * g_nproc_y * LZ * g_nproc_z * T * g_nproc_t * sizeof(spinor) / 2) {
+	     prec = 32;
+	   }
+	   else {
+	     fprintf(stderr, "Length of scidac-binary-data record in %s does not match input parameters.\n", filename);
+	     fprintf(stderr, "Found %d bytes.\n", bytes);
+	     return(-6);
+	   }
+	 }
+	 
+	 if (g_cart_id == 0 && g_debug_level >= 0) {
+	   printf("# %s precision read (%d bits).\n", (prec == 64 ? "Double" : "Single") ,prec);
+	 }
+	 int rstat;
+	 if( (rstat = read_binary_spinor_data(vec_even,vec_odd, reader, &checksum)) != 0) {
+	   fprintf(stderr, "read_binary_spinor_data failed with return value %d", rstat);
+	   return(-7);
+	 }
+	 
+	 if(N==VOLUME) { //solving the full system 
+	   convert_eo_to_lexic(r, vec_even, vec_odd);
+	   assign_spinor_to_complex(&evecs[j*12*N], r, N);
+	 } else {  //solving the eo preconditioned systems (only odd part of the eigenvector is computed)
+	   assign_spinor_to_complex(&evecs[j*12*N], vec_odd, N);
+	 }
+         
+	 if (g_cart_id == 0 && g_debug_level >= 0) {
+	   printf("# Scidac checksums for DiracFermion field %s:\n", filename);
+	   printf("#   Calculated            : A = %#x B = %#x.\n", checksum.suma, checksum.sumb);
+	   printf("# No Scidac checksum was read from headers, unable to check integrity of file.\n");
+	 }	 
+	 destruct_reader(reader);
+       } //for(j=0;...)
+       double et2 = gettime();
+       if(g_proc_id == g_stdio_proc)
+	 fprintf(stdout,"Finished reading deflation basis in %e seconds\n", et2-et1); 
+    } else {
+      double et1 = gettime();
+      int info_arpack = 0;      
+      evals_arpack(N, nev, ncv, kind, acc, cheb_k, emin, emax,
+		   evals, evecs, arpack_eig_tol, arpack_eig_maxiter,
+		   f, &info_arpack, &nconv, arpack_logfile);
+      double et2 = gettime();
+      
+      if(info_arpack != 0){ //arpack didn't converge
+	if(g_proc_id == g_stdio_proc)
+	  fprintf(stderr, "WARNING: ARPACK didn't converge. exiting..\n");
+	return -1;
+      }
+      
+      if(g_proc_id == g_stdio_proc)
+	{
+	  fprintf(stdout, "ARPACK has computed %d eigenvectors\n", nconv);
+	  fprintf(stdout, "ARPACK time: %+e\n", et2 - et1);
+	}
     }
+  
     nconv_op[op_id] = nconv;
     
     H = amalloc(nconv*nconv*sizeof(_Complex double)); 
@@ -251,174 +341,130 @@ int arpack_cg(
 
     //compute the elements of the hermitian matrix H 
     //leading dimension is nconv and active dimension is nconv
-    for(int i=0; i<nconv; i++)
-    {
+    for(int i=0; i<nconv; i++)  {
       assign_complex_to_spinor(r, &evecs[i*12*N], 12*N);
-
-       f(ax,r);
-       double c1 = scalar_prod(r, ax, N, parallel);
-       H[i+nconv*i] = creal(c1);  //diagonal should be real
-       for(int j=i+1; j<nconv; j++)
-       {
-          assign_complex_to_spinor(r, &evecs[j*12*N], 12*N);
-          c1 = scalar_prod(r, ax, N, parallel);
-          H[j+nconv*i] = c1;
-          H[i+nconv*j] = conj(c1); //enforce hermiticity
-       }
-     }
-
-     //compute Ritz values and Ritz vectors if needed
-    if( (nconv>0) && (comp_evecs !=0))
-      {
-	/* copy H into HU */
-	int nconv_sq = nconv*nconv;
-	int ONE = 1;
-	_FT(zcopy)(&nconv_sq, H, &ONE, H_aux, &ONE);
-	
-	/* compute eigenvalues and eigenvectors of HU*/
-	//SUBROUTINE ZHEEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK,INFO )
-	int zheev_lwork = 3*nconv;
-	_Complex double *zheev_work = amalloc(zheev_lwork*sizeof(_Complex double));
-	double *zheev_rwork = amalloc(3*nconv*sizeof(double));
-	double *hevals = amalloc(nconv*sizeof(double));
-	int zheev_info;
-	char cV='V', cU='U';
-	_FT(zheev)(&cV, &cU, &nconv, H_aux, &nconv, hevals, zheev_work, &zheev_lwork, zheev_rwork, &zheev_info, 1, 1);
-	
-	if(zheev_info != 0)
-	  {
-	    if(g_proc_id == g_stdio_proc) 
-	      {
-	        fprintf(stderr,"Error in ZHEEV:, info =  %d\n",zheev_info); 
-                fflush(stderr);
-	      }
-	    exit(1);
-	  }
-	free(zheev_rwork);
-	free(zheev_work);
-	
-	//If you want to replace the schur (orthonormal) basis by eigen basis
-	//use something like this. It is better to use the schur basis because
-	//they are better conditioned. Use this part only to get the eigenvalues
-	//and their resduals for the operator (D^\daggerD)
-	//esize=(ncv-nconv)*12*N;
-	//Zrestart_X(evecs,12*N,HU,12*N,nconv,nconv,&evecs[nconv*N],esize);
-	
-	/* compute residuals and print out results */
-	
-	if(g_proc_id == g_stdio_proc)
-	  {fprintf(stdout,"Ritz values of A and their residulas (||A*x-lambda*x||/||x||\n"); 
-	    fprintf(stdout,"=============================================================\n");
-	    fflush(stdout);}
-	
-	for(int i=0; i<nconv; i++)
-	  {
-	    int Nx12=12*N;
-	    char cN='N';
-	    _Complex double zero = 0., zone = 1.;
-	    int ONE = 1;
-	    _FT(zgemv)(&cN, &Nx12, &nconv, &zone, evecs, &Nx12,
-		       &H_aux[i*nconv], &ONE, &zero, z0, &ONE, 1);
-	    
-            assign_complex_to_spinor(r, z0, 12*N);	    
-            double norm0 = square_norm(r, N, parallel);
-            
-            f(ax,r);
-            mul_r(s0, hevals[i], r, N);
-            diff(s1, ax, s0, N);
-	    
-	    double norm1 = square_norm(s1, N, parallel);
-	    norm1 = sqrt(norm1/norm0);
-	    
-	    if(g_proc_id == g_stdio_proc)
-	      {
-		fprintf(stdout, "Eval[%06d]: %22.15E rnorm: %22.15E\n", i, hevals[i], norm1);
-		fflush(stdout);
-	      }
-	  }
       
-	free(hevals);
-#ifdef WRITE_EVS
-	 for(int i=0; i < nconv; i++)
-	   {
-	     int size = 12*N;
-	     _Complex double zone = 1., zero = 0;
-	     char cN = 'N';
-	     int ONE = 1;
-	     _FT(zgemv)(&cN, &size, &nconv, &zone, evecs, &size,
-			&H_aux[(i+0)*nconv], &ONE, &zero, z0, &ONE, 1);
-	     
-	     assign_complex_to_spinor(s0, z0, size);
-	     WRITER *writer = NULL;
-	     int append = 0;
-	     char fname[256];	
-	     paramsPropagatorFormat *format = NULL;
-	     int precision = 32;
-	     int numb_flavs = 1;
-	     
-	     sprintf(fname, "ev.%04d.%05d", nstore, i);
-	     construct_writer(&writer, fname, append);
+      f(ax,r);
+      double c1 = scalar_prod(r, ax, N, parallel);
+      H[i+nconv*i] = creal(c1);  //diagonal should be real
+      for(int j=i+1; j<nconv; j++) {
+	assign_complex_to_spinor(r, &evecs[j*12*N], 12*N);
+	c1 = scalar_prod(r, ax, N, parallel);
+	H[j+nconv*i] = c1;
+	H[i+nconv*j] = conj(c1); //enforce hermiticity
+      }
+    }
 
+    //compute Ritz values and Ritz vectors if needed
+    if( (nconv>0) && (comp_evecs !=0)) {
+      /* copy H into HU */
+      int nconv_sq = nconv*nconv;
+      int ONE = 1;
+      _FT(zcopy)(&nconv_sq, H, &ONE, H_aux, &ONE);
+      
+      /* compute eigenvalues and eigenvectors of HU*/
+      //SUBROUTINE ZHEEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK,INFO )
+      int zheev_lwork = 3*nconv;
+      _Complex double *zheev_work = amalloc(zheev_lwork*sizeof(_Complex double));
+      double *zheev_rwork = amalloc(3*nconv*sizeof(double));
+      double *hevals = amalloc(nconv*sizeof(double));
+      int zheev_info;
+      char cV='V', cU='U';
+      _FT(zheev)(&cV, &cU, &nconv, H_aux, &nconv, hevals, zheev_work, &zheev_lwork, zheev_rwork, &zheev_info, 1, 1);
+      
+      if(zheev_info != 0) {
+	if(g_proc_id == g_stdio_proc) {
+	  fprintf(stderr,"Error in ZHEEV:, info =  %d\n",zheev_info); 
+	  fflush(stderr);
+	}
+	exit(1);
+      }
+      free(zheev_rwork);
+      free(zheev_work);
+	
+      //If you want to replace the schur (orthonormal) basis by eigen basis
+      //use something like this. It is better to use the schur basis because
+      //they are better conditioned. Use this part only to get the eigenvalues
+      //and their resduals for the operator (D^\daggerD)
+      //esize=(ncv-nconv)*12*N;
+      //Zrestart_X(evecs,12*N,HU,12*N,nconv,nconv,&evecs[nconv*N],esize);
+      
+      /* compute residuals and print out results */
+      
+      if(g_proc_id == g_stdio_proc) {
+	fprintf(stdout,"Ritz values of A and their residulas (||A*x-lambda*x||/||x||\n"); 
+	fprintf(stdout,"=============================================================\n");
+	fflush(stdout);
+      }
+      
+      for(int i=0; i<nconv; i++) {
+	int Nx12=12*N;
+	char cN='N';
+	_Complex double zero = 0., zone = 1.;
+	int ONE = 1;
+	_FT(zgemv)(&cN, &Nx12, &nconv, &zone, evecs, &Nx12,
+		   &H_aux[i*nconv], &ONE, &zero, z0, &ONE, 1);
+	
+	assign_complex_to_spinor(r, z0, 12*N);	    
+	if(store_basis){
+	  WRITER *writer = NULL;
+	  int append = 0;
+	  char fname[256];	
+	  paramsPropagatorFormat *format = NULL;
+	  int precision;
+	  int numb_flavs = 1;
 
-	     format = construct_paramsPropagatorFormat(precision, numb_flavs);
-	     write_propagator_format(writer, format);
-	     free(format);	    
-
-	     memset(z1, '\0', size*sizeof(_Complex double));
-	     assign_complex_to_spinor(s1, z1,size);
-	     
-	     int status = write_spinor(writer, &s1, &s0, numb_flavs, precision);
-	     destruct_writer(writer);
-#if 1
-	     sprintf(fname, "ev.%04d.%05d.txt", nstore, i);
-	     FILE *fp = fopen(fname, "w");
-	     for(int t=0; t<T; t++)
-	       for(int z=0; z<LZ; z++)
-		 for(int y=0; y<LY; y++)
-		   for(int x=0; x<LX; x++) {		     
-		     int j = x + y + z + t;
-		     if(j%2 == 1) {
-		       int k = z + LZ*(y + LY*(x + LX*t));
-		       _Complex double *sp = &z0[(k/2)*12];
-		       for(int cs=0; cs<12; cs++)
-			 fprintf(fp,"%+e %+e\n", creal(sp[cs]), cimag(sp[cs]));
-		     }
-		   }
-	     fclose(fp);
-
-	     assign_complex_to_spinor(s0, z0, size);
-	     f(s1, s0);
-	     assign_spinor_to_complex(z0, s1, N);
-
-	     assign_complex_to_spinor(s0, z1, size);
-	     f(s1, s0);
-	     assign_spinor_to_complex(z1, s1, N);
-
-	     sprintf(fname, "Aev.%04d.%05d.txt", nstore, i);
-	     fp = fopen(fname, "w");
-	     for(int t=0; t<T; t++)
-	       for(int z=0; z<LZ; z++)
-		 for(int y=0; y<LY; y++)
-		   for(int x=0; x<LX; x++) {		     
-		     int j = x + y + z + t;
-		     if(j%2 == 1) {
-		       int k = z + LZ*(y + LY*(x + LX*t));
-		       _Complex double *sp = &z0[(k/2)*12];
-		       for(int cs=0; cs<12; cs++)
-			 fprintf(fp,"%+e %+e\n", creal(sp[cs]), cimag(sp[cs]));
-		     }
-		   }
-	     fclose(fp);
-#endif /* 0 */	     
-	   }
-#endif /* def WRITE_EVS */
-      }		//if( (nconv_arpack>0) && (comp_evecs !=0))
-
+	  if(basis_prec==0)
+	    precision = 32;
+	  else
+	    precision = 64;
+	  
+	  sprintf(fname, "%s.%05d", basis_fname, i);
+	  construct_writer(&writer, fname, append);
+	  
+	  format = construct_paramsPropagatorFormat(precision, numb_flavs);
+	  write_propagator_format(writer, format);
+	  free(format);	    
+	  
+	  //memset(tmpv2, '\0', size*sizeof(_Complex double));
+	  //assign_complex_to_spinor(tmps2,tmpv2,size);
+	  int status;
+	  if(N==VOLUME){ //solving the full system
+	    convert_lexic_to_eo(vec_even,vec_odd,r);
+	    status = write_spinor(writer, &vec_even, &vec_odd, numb_flavs, precision);
+	  }else{
+	    zero_spinor_field(vec_even,N);
+	    status = write_spinor(writer, &vec_even, &r, numb_flavs, precision);
+	  }
+	  destruct_writer(writer);
+	  
+	} //if(store_basis)...
+	double norm0 = square_norm(r, N, parallel);            
+	f(ax,r);
+	mul_r(s0, hevals[i], r, N);
+	diff(s1, ax, s0, N);
+	
+	double norm1 = square_norm(s1, N, parallel);
+	norm1 = sqrt(norm1/norm0);
+	
+	if(g_proc_id == g_stdio_proc)  {
+	  fprintf(stdout, "Eval[%06d]: %22.15E rnorm: %22.15E\n", i, hevals[i], norm1);
+	  fflush(stdout);
+	}
+      }      
+      free(hevals);
+    } //if( (nconv_arpack>0) && (comp_evecs !=0))
+    
     evecs_op[op_id] = evecs;
     evals_op[op_id] = evals;
     H_op[op_id] = H;
     H_aux_op[op_id] = H_aux;
     initwork_op[op_id] = initwork;
+
+    if(read_basis || store_basis) {
+       free(vec_odd);
+       free(vec_even);
+    }    
   }		//if(ncurRHS==0)
   
   /* increment the RHS counter */
@@ -574,7 +620,3 @@ int arpack_cg(
   
   return iters_tot;
 }
- 
-
-
-      

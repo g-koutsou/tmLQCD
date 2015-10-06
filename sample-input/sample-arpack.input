@@ -1,0 +1,53 @@
+L=48
+T=96
+
+NrXProcs = 8
+NrYProcs = 8
+NrZProcs = 8
+
+NoBlocksX =2
+NoBlocksY =2
+NoBlocksZ =2
+NoBlocksT =2
+
+
+OmpNumThreads = 1
+
+
+DebugLevel            = 5
+InitialStoreCounter   = 525
+Measurements          = 1
+2kappamu              = 0.000247122000
+kappa                 = 0.137290
+BCAngleT              = 1.
+GaugeConfigInputFile  = conf
+UseEvenOdd            = yes
+UseRelativePrecision  = yes
+SourceType            = Point
+#SourceType           = Volume
+Indices               = 0-11
+ReadSource            = no
+NoSamples             = 1
+DisableIOChecks       = no
+
+BeginOperator CLOVER
+  CSW                 = 1.57551
+  2kappaMu            = 0.000247122000
+  kappa               = 0.137290
+  Solver              = ARPACK
+  ARPACKCGnev         = 100        #number of eigenvectors to be computed by arpack
+  ARPACKCGncv         = 200        #size of the subspace used by arpack nev+1 =< ncv 
+  ARPACKCGeigmaxiter  = 1000       #maximum number of iterations to be used by arpack
+  ARPACKCGeigtol      = 1.0e-5     #tolerance (not squared tolerance) for computing eigenvectors by arpack
+  ARPACKCGevalsKind   = 1          #type of eigenvalues to be computed by arpack: 0 smallest real part, 1 largest real part
+  ARPACKAccMode       = 1          #0 / 1 don't use/use polynomial acceleration
+  ARPACKStoreBasis    = 0          #when computing basis with arpack, 0 means don't store them to disk, 1 means store them to disk
+  ARPACKBasisFileName = fname      #file name of the basis vectors when writing them to disk
+  ARPACKBasisPrec     = 0          #when writing basis to disk, 0 means single precision, 1 means double precision
+  ARPACKLogFile       = arpack_log #file name for the arpack log file
+  ChebPolyDegree      = 200        #degree of the Chebyshev polynomial used for acceleration
+  EVminHPD            = 4.e-4      #lower bound for the polynomial
+  EVmaxHPD            = 3.6        #upper bound for the polynomial
+  AddDownPropagator   = no
+EndOperator
+

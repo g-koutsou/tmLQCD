@@ -66,7 +66,18 @@ int arpack_cg(
      int cheb_k,                    /*(IN) degree of the Chebyshev polynomial (irrelevant if acc=0)*/
      double emin,                      /*(IN) lower end of the interval where the acceleration will be used (irrelevant if acc=0)*/
      double emax,                      /*(IN) upper end of the interval where the acceleration will be used (irrelevant if acc=0)*/
-     char *arpack_logfile,           /*(IN) file name to be used for printing out debugging information from arpack*/
+     int read_basis,               /*(IN) 0 compute deflation basis using arpack, 1 read deflation basis from disk */
+     int store_basis,              /*(IN) when using arpack to compute eigenvectors use this  
+                                          option to store basis vectors to disk such that they can be read later
+                                          0 don't store basis vectors
+                                          1 store basis vectors */
+     char *basis_fname,            /*(IN)file name used to read/store the basis vectors
+                                         file names will be of the format
+                                         basis_fname.xxxxx where xxxxx will be the basis vector number with leading zeros */
+     int basis_prec,               /*(IN)precision used to write the basis vectors
+                                         0 single precision
+                                         1 double precision*/
+  char *arpack_logfile,           /*(IN) file name to be used for printing out debugging information from arpack*/
      const int op_id		     /* (IN) the operator ID. ARPACK
 					will deflate for each new
 					operator, and keep the
@@ -74,6 +85,41 @@ int arpack_cg(
 					for different operatos. Useful
 					for interleaving up and down
 					inversions */
-	      );
+     );
+
+
+/* //solver to compute eigenvectors only */
+/* int arpack( */
+/*      //solver params */
+/*      const int N,             /\*(IN) Number of lattice sites for this process*\/ */
+/*      matrix_mult f,           /\*(IN) f(s,r) computes s=A*r, i.e. matrix-vector multiply*\/ */
+/*      //parameters for arpack */
+/*      const int nev,                 /\*(IN) number of eigenvectors to be computed by arpack*\/ */
+/*      const int ncv,                 /\*(IN) size of the subspace used by arpack with the condition (nev+1) =< ncv*\/ */
+/*      double arpack_eig_tol,         /\*(IN) tolerance for computing eigenvalues with arpack *\/ */
+/*      int arpack_eig_maxiter,        /\*(IN) maximum number of iterations to be used by arpack*\/ */
+/*      int kind,                      /\*(IN) 0 for eigenvalues with smallest real part "SR" */
+/*                                            1 for eigenvalues with largest  real part "LR" */
+/*                                            2 for eigenvalues with smallest absolute value "SM" */
+/*                                            3 for eigenvalues with largest absolute value  "LM" */
+/*                                            4 for eigenvalues with smallest imaginary part "SI" */
+/*                                            5 for eigenvalues with largest imaginary part  "LI"*\/ */
+/*      int acc,                       /\*(IN) 0 no polynomial acceleration */
+/*                                            1 use polynomial acceleration*\/ */
+/*      int cheb_k,                    /\*(IN) degree of the Chebyshev polynomial (irrelevant if acc=0)*\/ */
+/*      double emin,                      /\*(IN) lower end of the interval where the acceleration will be used (irrelevant if acc=0)*\/ */
+/*      double emax,                      /\*(IN) upper end of the interval where the acceleration will be used (irrelevant if acc=0)*\/ */
+/*      int store_basis,              /\*(IN) when using arpack to compute eigenvectors use this   */
+/*                                           option to store basis vectors to disk such that they can be read later */
+/*                                           0 don't store basis vectors */
+/*                                           1 store basis vectors *\/ */
+/*      char *basis_fname,            /\*(IN)file name used to read/store the basis vectors */
+/*                                          file names will be of the format */
+/*                                          basis_fname.xxxxx where xxxxx will be the basis vector number with leading zeros *\/ */
+/*      int basis_prec,               /\*(IN)precision used to write the basis vectors */
+/*                                          0 single precision */
+/*                                          1 double precision*\/ */
+/*      char *arpack_logfile           /\*(IN) file name to be used for printing out debugging information from arpack*\/ */
+/*      ); */
 
 #endif 

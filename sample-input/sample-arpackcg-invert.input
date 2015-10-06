@@ -5,6 +5,14 @@ NrXProcs = 8
 NrYProcs = 8
 NrZProcs = 8
 
+NoBlocksX = 2
+NoBlocksY = 2
+NoBlocksZ = 2
+NoBlocksT = 2
+
+
+
+
 OmpNumThreads = 1
 
 
@@ -42,6 +50,12 @@ BeginOperator CLOVER
   ARPACKCGevalsKind   = 1          #type of eigenvalues to be computed by arpack: 0 smallest real part, 1 largest real part
   ARPACKAccMode       = 1          #0 / 1 don't use/use polynomial acceleration
   ARPACKCompEvecs     = 1          #compute eigenvalues and residuals of A (use fo debugging specially when using polynomial accelertion)
+  ARPACKReadBasis     = 0          #0 means deflation basis to be computed, 1 means they will be read from disk
+  ARPACKStoreBasis    = 0          #when computing basis with arpack, 0 means don't store them to disk, 1 means store them to disk
+                                   #this also requires ARPACKCompEvecs=1
+  ARPACKBasisFileName = deflation_basis_vector #file name of the basis vectors when writing them to disk
+  ARPACKBasisPrec     = 0          #when reading/writing basis to disk, 0 means single precision, 1 means double precision
+                                   #works for writing to disc only at the moment. For reading only double precision is implemented
   ARPACKLogFile       = arpack_log   #file name for the arpack log file
   ChebPolyDegree      = 200          #degree of the Chebyshev polynomial used for acceleration
   EVminHPD            = 4.e-4        #lower bound for the polynomial

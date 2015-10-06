@@ -34,6 +34,7 @@
 #include <io/params.h>
 #include <io/dml.h>
 
+#include<math.h>
 
 #ifndef isnan
 # define isnan(x)						 \

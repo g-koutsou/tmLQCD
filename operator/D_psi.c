@@ -40,235 +40,24 @@
 #include "su3.h"
 #include "sse.h"
 #include "boundary.h"
+#include "gamma.h"
+#include "linalg_eo.h"
 #ifdef MPI
 # include "xchange/xchange.h"
 #endif
 #include "update_backward_gauge.h"
 #include "block.h"
 #include "operator/D_psi.h"
+#include "operator/clovertm_operators.h"
 #include "solver/dirac_operator_eigenvectors.h"
 
 #if (defined SSE23 || defined SSE33)
-
-#elif (defined BGL && defined XLC)
-
-/* We have 32 registers available */
-static double _Complex reg00, reg01, reg02, reg03, reg04, reg05;
-static double _Complex reg10, reg11, reg12, reg13, reg14, reg15;
-/* For the gauge field, reuse the first three!*/
-static double _Complex u00, u01, u02, u10, u11, u12;
-static double _Complex reg20, reg21;
-/* The following contains the result spinor (12 regs) */
-static double _Complex rs00, rs01, rs02, rs10, rs11, rs12, rs20, rs21, rs22, 
-  rs30, rs31, rs32;
-
-
-/* this is the hopping part only */
-void local_H(spinor * const rr, spinor * const s, su3 * u, int * _idx) {
-
-  int * idx = _idx;
-  su3 * restrict up ALIGN;
-  su3 * restrict um ALIGN;
-  spinor * restrict sp ALIGN;
-  spinor * restrict sm ALIGN;
-
-#pragma disjoint(*s, *sp, *sm, *rr, *up, *um)
-
-  __alignx(16,rr);
-  __alignx(16,s);
-
-  /*********************** direction +0 ************************/
-  up = u;
-  sp = (spinor *) s + (*idx);
-  idx++;
-
-  um = up+1;
-  _prefetch_su3(um); 
-  sm = (spinor *) s + (*idx);
-  _prefetch_spinor(sm); 
-  idx++;
-
-  _bgl_load_reg0(sp->s0);
-  _bgl_load_reg1(sp->s1);
-  _bgl_load_reg0_up(sp->s2);
-  _bgl_load_reg1_up(sp->s3);
-  _bgl_vector_add_reg0();
-  _bgl_vector_add_reg1();
-  /* result is now in regx0, regx1, regx2 x = 0,1 */
-  
-  _bgl_su3_multiply_double((*up));
-  _bgl_vector_cmplx_mul_double(phase_0);
-  _bgl_add_to_rs0_reg0();
-  _bgl_add_to_rs2_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_add_to_rs3_reg1();
-
-  /*********************** direction -0 ************************/
-  up = um+1;
-  _prefetch_su3(up); 
-  sp = (spinor*) s + (*idx);
-  _prefetch_spinor(sp); 
-  idx++;
-
-  _bgl_load_reg0(sm->s0);
-  _bgl_load_reg1(sm->s1);
-  _bgl_load_reg0_up(sm->s2);
-  _bgl_load_reg1_up(sm->s3);
-  _bgl_vector_sub_reg0();
-  _bgl_vector_sub_reg1();
-  
-  _bgl_su3_inverse_multiply_double((*um));
-  _bgl_vector_cmplxcg_mul_double(phase_0);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_sub_from_rs2_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_sub_from_rs3_reg1();
-  
-  /*********************** direction +1 ************************/
-  
-  um = up+1;
-  _prefetch_su3(um); 
-  sm = (spinor*) s + (*idx);
-  _prefetch_spinor(sm); 
-  idx++;
-
-  _bgl_load_reg0(sp->s0);
-  _bgl_load_reg1(sp->s1);
-  _bgl_load_reg0_up(sp->s3);
-  _bgl_load_reg1_up(sp->s2);
-  _bgl_vector_i_mul_add_reg0();
-  _bgl_vector_i_mul_add_reg1();
-  
-  _bgl_su3_multiply_double((*up));
-  _bgl_vector_cmplx_mul_double(phase_1);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_i_mul_sub_from_rs3_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_i_mul_sub_from_rs2_reg1();
-  
-  /*********************** direction -1 ************************/
-
-  up = um+1;
-  _prefetch_su3(up); 
-  sp = (spinor*) s + (*idx);
-  _prefetch_spinor(sp); 
-  idx++;
-
-  _bgl_load_reg0(sm->s0);
-  _bgl_load_reg1(sm->s1);
-  _bgl_load_reg0_up(sm->s3);
-  _bgl_load_reg1_up(sm->s2);
-  _bgl_vector_i_mul_sub_reg0();
-  _bgl_vector_i_mul_sub_reg1();
-  
-  _bgl_su3_inverse_multiply_double((*um));
-  _bgl_vector_cmplxcg_mul_double(phase_1);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_i_mul_add_to_rs3_reg0();
-  _bgl_i_mul_add_to_rs2_reg1();      
-  
-  /*********************** direction +2 ************************/
-  
-  um = up+1;
-  _prefetch_su3(um); 
-  sm = (spinor*) s + (*idx);
-  _prefetch_spinor(sm); 
-  idx++;
-
-  _bgl_load_reg0(sp->s0);
-  _bgl_load_reg1(sp->s1);
-  _bgl_load_reg1_up(sp->s2);
-  _bgl_load_reg0_up(sp->s3);
-  _bgl_vector_add_reg0();
-  _bgl_vector_sub_reg1();
-  
-  _bgl_su3_multiply_double((*up));
-  _bgl_vector_cmplx_mul_double(phase_2);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_sub_from_rs2_reg1();
-  _bgl_add_to_rs3_reg0();
-  
-
-  /*********************** direction -2 ************************/
-  up = um+1;
-  _prefetch_su3(up); 
-  sp = (spinor*) s + (*idx);
-  _prefetch_spinor(sp); 
-  idx++;
-
-  _bgl_load_reg0(sm->s0);
-  _bgl_load_reg1(sm->s1);
-  _bgl_load_reg1_up(sm->s2);
-  _bgl_load_reg0_up(sm->s3);
-  _bgl_vector_sub_reg0();
-  _bgl_vector_add_reg1();
-  
-  _bgl_su3_inverse_multiply_double((*um));
-  _bgl_vector_cmplxcg_mul_double(phase_2);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_add_to_rs2_reg1();
-  _bgl_sub_from_rs3_reg0();
-  
-  /*********************** direction +3 ************************/
-  um = up+1;
-  _prefetch_su3(um); 
-  sm = (spinor*) s + (*idx);
-  _prefetch_spinor(sm); 
-
-  _bgl_load_reg0(sp->s0);
-  _bgl_load_reg1(sp->s1);
-  _bgl_load_reg0_up(sp->s2);
-  _bgl_load_reg1_up(sp->s3);
-  _bgl_vector_i_mul_add_reg0();
-  _bgl_vector_i_mul_sub_reg1();
-  
-  _bgl_su3_multiply_double((*up));
-  _bgl_vector_cmplx_mul_double(phase_3);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_add_to_rs1_reg1();
-  _bgl_i_mul_sub_from_rs2_reg0();
-  _bgl_i_mul_add_to_rs3_reg1();
-  
-  /*********************** direction -3 ************************/
-
-  _bgl_load_reg0(sm->s0);
-  _bgl_load_reg1(sm->s1);
-  _bgl_load_reg0_up(sm->s2);
-  _bgl_load_reg1_up(sm->s3);
-  _bgl_vector_i_mul_sub_reg0();
-  _bgl_vector_i_mul_add_reg1();
-  
-  _bgl_su3_inverse_multiply_double((*um));
-  _bgl_vector_cmplxcg_mul_double(phase_3);
-  
-  _bgl_add_to_rs0_reg0();
-  _bgl_store_rs0(rr->s0);
-  _bgl_i_mul_add_to_rs2_reg0();
-  _bgl_store_rs2(rr->s2);
-  
-  _bgl_add_to_rs1_reg1();
-  _bgl_store_rs1(rr->s1);
-  _bgl_i_mul_sub_from_rs3_reg1();
-  _bgl_store_rs3(rr->s3);
-
-}
-
 
 #else
 
 
 static inline void p0add(spinor * restrict const tmpr , spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
-
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -296,7 +85,7 @@ static inline void p0add(spinor * restrict const tmpr , spinor const * restrict 
 
 
 static inline void m0add(spinor * restrict const tmpr, spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -323,7 +112,7 @@ static inline void m0add(spinor * restrict const tmpr, spinor const * restrict c
 }
 
 static inline void p1add(spinor * restrict const tmpr, spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -350,7 +139,7 @@ static inline void p1add(spinor * restrict const tmpr, spinor const * restrict c
 }
 
 static inline void m1add(spinor * restrict const tmpr, spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -377,7 +166,7 @@ static inline void m1add(spinor * restrict const tmpr, spinor const * restrict c
 }
 
 static inline void p2add(spinor * restrict const tmpr, spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -405,7 +194,7 @@ static inline void p2add(spinor * restrict const tmpr, spinor const * restrict c
 }
 
 static inline void m2add(spinor * restrict const tmpr, spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -432,7 +221,7 @@ static inline void m2add(spinor * restrict const tmpr, spinor const * restrict c
 }
 
 static inline void p3add(spinor * restrict const tmpr, spinor const * restrict const s, 
-			 su3 const * restrict const u, const _Complex double phase) {
+                         su3 const * restrict const u, const _Complex double phase) {
 #ifdef OMP
 #define static
 #endif
@@ -459,8 +248,8 @@ static inline void p3add(spinor * restrict const tmpr, spinor const * restrict c
 }
 
 static inline void m3addandstore(spinor * restrict const r, spinor const * restrict const s, 
-				 su3 const * restrict const u, const _Complex double phase,
-         spinor const * restrict const tmpr) {
+                                 su3 const * restrict const u, const _Complex double phase,
+				 spinor const * restrict const tmpr) {
 #ifdef OMP
 #define static
 #endif
@@ -487,7 +276,8 @@ static inline void m3addandstore(spinor * restrict const r, spinor const * restr
 }
 
 /* this is the hopping part only */
-static inline void local_H(spinor * const rr, spinor const * const s, su3 const * restrict u, int * _idx, spinor * const restrict tmpr) {
+static inline void local_H(spinor * const rr, spinor const * const s, su3 const * restrict u, 
+			   int * _idx, spinor * const restrict tmpr) {
 
   int * idx = _idx;
 
@@ -534,7 +324,7 @@ static inline void local_H(spinor * const rr, spinor const * const s, su3 const 
 void D_psi(spinor * const P, spinor * const Q){
 
   if(P==Q){
-    printf("Error in D_psi (operator.c):\n");
+    printf("Error in D_psi (D_psi.c):\n");
     printf("Arguments must be differen spinor fields\n");
     printf("Program aborted\n");
     exit(1);
@@ -542,7 +332,7 @@ void D_psi(spinor * const P, spinor * const Q){
 
 #ifdef _GAUGE_COPY2
   if(g_update_gauge_copy) {
-      update_backward_gauge(g_gauge_field);
+    update_backward_gauge(g_gauge_field);
   }
 #endif
 
@@ -554,641 +344,770 @@ void D_psi(spinor * const P, spinor * const Q){
 #pragma omp parallel
   {
 #endif
-  int ix,iy,iz;
-  su3 *up,*um;
-  spinor *s,*sp,*sm,*rn;
-  _Complex double fact1, fact2;
-  spinor rs __attribute__ ((aligned (16)));
+    int ix,iy,iz;
+    su3 *up,*um;
+    spinor *s,*sp,*sm,*rn;
+    _Complex double fact1, fact2;
+    spinor rs __attribute__ ((aligned (16)));
 
-  fact1 = 1. + g_mu * I;
-  fact2 = conj(fact1);
+    fact1 = 1. + g_mu * I;
+    fact2 = conj(fact1);
 
 #ifndef OMP
-  iy=g_iup[0][0];
-  sp=(spinor *) Q + iy;
-  up=&g_gauge_field[0][0];
+    iy=g_iup[0][0];
+    sp=(spinor *) Q + iy;
+    up=&g_gauge_field[0][0];
 #endif
 
-  /************************ loop over all lattice sites *************************/
+    /************************ loop over all lattice sites *************************/
 #ifdef OMP
 #pragma omp for
 #endif
-  for (ix=0;ix<VOLUME;ix++){
+    for (ix=0;ix<VOLUME;ix++){
 #ifdef OMP
-    iy=g_iup[ix][0];
-    up=&g_gauge_field[ix][0];
-    sp=(spinor *) Q + iy;
+      iy=g_iup[ix][0];
+      up=&g_gauge_field[ix][0];
+      sp=(spinor *) Q + iy;
 #endif
-    s=(spinor *) Q + ix;
-    _prefetch_spinor(s);
+      s=(spinor *) Q + ix;
+      _prefetch_spinor(s);
 
-    /******************************* direction +0 *********************************/
+      /******************************* direction +0 *********************************/
 
-    iy=g_idn[ix][0];
+      iy=g_idn[ix][0];
       
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm);       
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);       
 
-    _sse_load(sp->s0);
-    _sse_load_up(sp->s2);
-    _sse_vector_add();
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s2);
+      _sse_vector_add();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_0);
-    _sse_store_up(rs.s2);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_0);
+      _sse_store_up(rs.s2);
 
-    _sse_load_up(s->s0);
-    _sse_vector_cmplx_mul(fact1);
-/*     _sse_vector_mul(fact1); */
-    _sse_load(rs.s2);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      // the diagonal bit
+      _sse_load_up(s->s0);
+      _sse_vector_cmplx_mul(fact1);
+      _sse_load(rs.s2);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load_up(s->s2);
-    _sse_vector_cmplx_mul(fact2);
-/*     _sse_vector_mul(fact1);       */
-    _sse_load(rs.s2);
-    _sse_vector_add();
-    _sse_store(rs.s2);      
+      // g5 in the twisted term
+      _sse_load_up(s->s2);
+      _sse_vector_cmplx_mul(fact2);
+      _sse_load(rs.s2);
+      _sse_vector_add();
+      _sse_store(rs.s2);      
       
-    um=&g_gauge_field[iy][0];
-    _prefetch_su3(um);
+      um=&g_gauge_field[iy][0];
+      _prefetch_su3(um);
       
-    _sse_load(sp->s1);
-    _sse_load_up(sp->s3);
-    _sse_vector_add();
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s3);
+      _sse_vector_add();
       
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_0);
-    _sse_store_up(rs.s3);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_0);
+      _sse_store_up(rs.s3);
     
-    _sse_load_up(s->s1);
-    _sse_vector_cmplx_mul(fact1);
-/*     _sse_vector_mul(fact1); */
-    _sse_load(rs.s3);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      // the diagonal bit
+      _sse_load_up(s->s1);
+      _sse_vector_cmplx_mul(fact1);
+      _sse_load(rs.s3);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load_up(s->s3);
-    _sse_vector_cmplx_mul(fact2);
-/*     _sse_vector_mul(fact1);       */
-    _sse_load(rs.s3);
-    _sse_vector_add();
-    _sse_store(rs.s3); 
+      // g5 in the twisted term
+      _sse_load_up(s->s3);
+      _sse_vector_cmplx_mul(fact2);
+      _sse_load(rs.s3);
+      _sse_vector_add();
+      _sse_store(rs.s3); 
 
-    /******************************* direction -0 *********************************/
+      /******************************* direction -0 *********************************/
 
-    iy=g_iup[ix][1];
+      iy=g_iup[ix][1];
 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp);
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    _sse_load(sm->s0);
-    _sse_load_up(sm->s2);
-    _sse_vector_sub();
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s2);
+      _sse_vector_sub();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_0);
-    _sse_load(rs.s0);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_0);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load(rs.s2);
-    _sse_vector_sub();
-    _sse_store(rs.s2);
+      _sse_load(rs.s2);
+      _sse_vector_sub();
+      _sse_store(rs.s2);
       
-    up+=1;
-    _prefetch_su3(up);
+      up+=1;
+      _prefetch_su3(up);
       
-    _sse_load(sm->s1);
-    _sse_load_up(sm->s3);
-    _sse_vector_sub();
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s3);
+      _sse_vector_sub();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_0);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_0);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load(rs.s3);
-    _sse_vector_sub();
-    _sse_store(rs.s3);
+      _sse_load(rs.s3);
+      _sse_vector_sub();
+      _sse_store(rs.s3);
       
-    /******************************* direction +1 *********************************/
+      /******************************* direction +1 *********************************/
 
-    iy=g_idn[ix][1];
+      iy=g_idn[ix][1];
       
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm);
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);
 
-    _sse_load(sp->s0);
-    _sse_load_up(sp->s3);
-    _sse_vector_i_mul();
-    _sse_vector_add();
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s3);
+      _sse_vector_i_mul();
+      _sse_vector_add();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_1);
-    _sse_load(rs.s0);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_1);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load(rs.s3);
-    _sse_vector_i_mul();      
-    _sse_vector_sub();
-    _sse_store(rs.s3); 
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store(rs.s3); 
       
-    um=&g_gauge_field[iy][1];
-    _prefetch_su3(um);
+      um=&g_gauge_field[iy][1];
+      _prefetch_su3(um);
 
-    _sse_load(sp->s1);
-    _sse_load_up(sp->s2);
-    _sse_vector_i_mul();
-    _sse_vector_add();
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s2);
+      _sse_vector_i_mul();
+      _sse_vector_add();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_1);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_1);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load(rs.s2);
-    _sse_vector_i_mul();      
-    _sse_vector_sub();
-    _sse_store(rs.s2);       
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store(rs.s2);       
 
-    /******************************* direction -1 *********************************/
+      /******************************* direction -1 *********************************/
 
-    iy=g_iup[ix][2];
+      iy=g_iup[ix][2];
 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp);
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    _sse_load(sm->s0);
-    _sse_load_up(sm->s3);
-    _sse_vector_i_mul();
-    _sse_vector_sub();
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s3);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_1);
-    _sse_load(rs.s0);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_1);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load(rs.s3);
-    _sse_vector_i_mul();      
-    _sse_vector_add();
-    _sse_store(rs.s3);
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store(rs.s3);
 
-    up+=1;
-    _prefetch_su3(up);
+      up+=1;
+      _prefetch_su3(up);
 
-    _sse_load(sm->s1);
-    _sse_load_up(sm->s2);
-    _sse_vector_i_mul();
-    _sse_vector_sub();
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s2);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_1);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_1);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load(rs.s2);
-    _sse_vector_i_mul();      
-    _sse_vector_add();
-    _sse_store(rs.s2);
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store(rs.s2);
 
-    /******************************* direction +2 *********************************/
+      /******************************* direction +2 *********************************/
 
-    iy=g_idn[ix][2];
+      iy=g_idn[ix][2];
 
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm);
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);
 
-    _sse_load(sp->s0);
-    _sse_load_up(sp->s3);
-    _sse_vector_add();
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s3);
+      _sse_vector_add();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_2);
-    _sse_load(rs.s0);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_2);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load(rs.s3);
-    _sse_vector_add();
-    _sse_store(rs.s3);
+      _sse_load(rs.s3);
+      _sse_vector_add();
+      _sse_store(rs.s3);
       
-    um=&g_gauge_field[iy][2];
-    _prefetch_su3(um);
+      um=&g_gauge_field[iy][2];
+      _prefetch_su3(um);
 
-    _sse_load(sp->s1);
-    _sse_load_up(sp->s2);
-    _sse_vector_sub();
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s2);
+      _sse_vector_sub();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_2);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_2);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load(rs.s2);
-    _sse_vector_sub();
-    _sse_store(rs.s2);      
+      _sse_load(rs.s2);
+      _sse_vector_sub();
+      _sse_store(rs.s2);      
 
-    /******************************* direction -2 *********************************/
+      /******************************* direction -2 *********************************/
 
-    iy=g_iup[ix][3];
+      iy=g_iup[ix][3];
 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp);
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    _sse_load(sm->s0);
-    _sse_load_up(sm->s3);
-    _sse_vector_sub();
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s3);
+      _sse_vector_sub();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_2);
-    _sse_load(rs.s0);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_2);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load(rs.s3);
-    _sse_vector_sub();
-    _sse_store(rs.s3);
+      _sse_load(rs.s3);
+      _sse_vector_sub();
+      _sse_store(rs.s3);
       
-    up+=1;
-    _prefetch_su3(up);
+      up+=1;
+      _prefetch_su3(up);
 
-    _sse_load(sm->s1);
-    _sse_load_up(sm->s2);
-    _sse_vector_add();
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s2);
+      _sse_vector_add();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_2);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_2);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load(rs.s2);
-    _sse_vector_add();
-    _sse_store(rs.s2);      
+      _sse_load(rs.s2);
+      _sse_vector_add();
+      _sse_store(rs.s2);      
       
-    /******************************* direction +3 *********************************/
+      /******************************* direction +3 *********************************/
 
-    iy=g_idn[ix][3];
+      iy=g_idn[ix][3];
 
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm);
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);
 
-    _sse_load(sp->s0);
-    _sse_load_up(sp->s2);
-    _sse_vector_i_mul();
-    _sse_vector_add();
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s2);
+      _sse_vector_i_mul();
+      _sse_vector_add();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_3);
-    _sse_load(rs.s0);
-    _sse_vector_add();
-    _sse_store(rs.s0);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_3);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _sse_load(rs.s2);
-    _sse_vector_i_mul();      
-    _sse_vector_sub();
-    _sse_store(rs.s2);
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store(rs.s2);
       
-    um=&g_gauge_field[iy][3];
-    _prefetch_su3(um);
+      um=&g_gauge_field[iy][3];
+      _prefetch_su3(um);
 
-    _sse_load(sp->s1);
-    _sse_load_up(sp->s3);
-    _sse_vector_i_mul();
-    _sse_vector_sub();
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s3);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
 
-    _sse_su3_multiply((*up));
-    _sse_vector_cmplx_mul(phase_3);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-    _sse_store(rs.s1);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_3);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _sse_load(rs.s3);
-    _sse_vector_i_mul();      
-    _sse_vector_add();
-    _sse_store(rs.s3);
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store(rs.s3);
       
-    /******************************* direction -3 *********************************/
+      /******************************* direction -3 *********************************/
 
-    iz=(ix+1+VOLUME)%VOLUME;
+      iz=(ix+1+VOLUME)%VOLUME;
 
-    iy=g_iup[iz][0];
+      iy=g_iup[iz][0];
       
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp);
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    _sse_load(sm->s0);
-    _sse_load_up(sm->s2);
-    _sse_vector_i_mul();
-    _sse_vector_sub();
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s2);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_3);
-    rn = (spinor *) P + ix;
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_3);
+      rn = (spinor *) P + ix;
       
-    _sse_load(rs.s0);
-    _sse_vector_add();
-/*     _sse_vector_mul(fact2); */
-    _sse_store_nt(rn->s0);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store_nt(rn->s0);
 
-    _sse_load(rs.s2);
-    _sse_vector_i_mul();      
-    _sse_vector_add();
-/*     _sse_vector_mul(fact2);       */
-    _sse_store_nt(rn->s2);
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store_nt(rn->s2);
 
-    up=&g_gauge_field[iz][0];
-    _prefetch_su3(up);
+      up=&g_gauge_field[iz][0];
+      _prefetch_su3(up);
 
-    _sse_load(sm->s1);
-    _sse_load_up(sm->s3);
-    _sse_vector_i_mul();
-    _sse_vector_add();
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s3);
+      _sse_vector_i_mul();
+      _sse_vector_add();
       
-    _sse_su3_inverse_multiply((*um));
-    _sse_vector_cmplxcg_mul(phase_3);
-    _sse_load(rs.s1);
-    _sse_vector_add();
-/*     _sse_vector_mul(fact2);       */
-    _sse_store_nt(rn->s1);
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_3);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store_nt(rn->s1);
 
-    _sse_load(rs.s3);
-    _sse_vector_i_mul();      
-    _sse_vector_sub();
-/*     _sse_vector_mul(fact2); */
-    _sse_store_nt(rn->s3);
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store_nt(rn->s3);
       
-    /******************************** end of loop *********************************/
+      /******************************** end of loop *********************************/
 
-  }
+    }
 #ifdef OMP
   } /* OpenMP closing brace */
 #endif
 }
 
-#elif ((defined BGL) && (defined XLC))
+void Dsw_psi(spinor * const P, spinor * const Q){
 
+  if(P==Q){
+    printf("Error in Dsw_psi (D_psi.c):\n");
+    printf("Arguments must be differen spinor fields\n");
+    printf("Program aborted\n");
+    exit(1);
+  }
 
-/**********************************
- *
- * Blue Gene/L Version
- *
- * Author: Carsten Urbach
- *
- **********************************/
-/* Checked! */
-void D_psi(spinor * const P, spinor * const Q){
-  int ix,iy,iz;
-  static _Complex double fact1;
-  su3 * restrict up ALIGN;
-  su3 * restrict um ALIGN;
-  spinor * restrict s ALIGN;
-  spinor * restrict sp ALIGN;
-  spinor * restrict sm ALIGN;
-  spinor * restrict rn ALIGN;
-
-#pragma disjoint(*s, *sp, *sm, *rn, *up, *um, *P, *Q)
-
-  __alignx(16,P);
-  __alignx(16,Q);
-
-#ifdef _GAUGE_COPY
+#ifdef _GAUGE_COPY2
   if(g_update_gauge_copy) {
     update_backward_gauge(g_gauge_field);
   }
 #endif
 
-#    if (defined MPI && !(defined _NO_COMM))
+# if defined MPI
   xchange_lexicfield(Q);
-#    endif
+# endif
 
-  fact1 = 1.0 + g_mu * I;
+#ifdef OMP
+#pragma omp parallel
+  {
+#endif
+    int ix,iy,iz;
+    su3 *up,*um;
+    spinor *s,*sp,*sm,*rn;
+    spinor ALIGN stmp,rs;
 
-  iy=g_iup[0][0];
-  sp=(spinor *) Q + iy;
-  up=&g_gauge_field[0][0];
+#ifndef OMP
+    iy=g_iup[0][0];
+    sp=(spinor *) Q + iy;
+    up=&g_gauge_field[0][0];
+#endif
 
-  /**************** loop over all lattice sites ******************/
-  for(ix = 0; ix < VOLUME; ix++){
-    s=(spinor *) Q + ix;
-    rn = (spinor *) P + ix;
-    /*********************** direction +0 ************************/
+    /************************ loop over all lattice sites *************************/
+#ifdef OMP
+#pragma omp for
+#endif
+    for (ix=0;ix<VOLUME;ix++){
+#ifdef OMP
+      iy=g_iup[ix][0];
+      up=&g_gauge_field[ix][0];
+      sp=(spinor *) Q + iy;
+#endif
+      s=(spinor *) Q + ix;
+      _prefetch_spinor(s);
 
-    iy=g_idn[ix][0]; 
+      /******************************* direction +0 *********************************/
 
-    um=&g_gauge_field[iy][0]; 
+      iy=g_idn[ix][0];
+      
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);       
 
-    _prefetch_su3(um); 
-    sm = (spinor*) Q + iy;
-    _prefetch_spinor(sm); 
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s2);
+      _sse_vector_add();
 
-    _bgl_load_reg0(sp->s0);
-    _bgl_load_reg1(sp->s1);
-    _bgl_load_reg0_up(sp->s2);
-    _bgl_load_reg1_up(sp->s3);
-    _bgl_vector_add_reg0();
-    _bgl_vector_add_reg1();
-    /* result is now in regx0, regx1, regx2 x = 0,1 */
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_0);
+      _sse_store_up(rs.s2);
 
-    _bgl_su3_multiply_double((*up));
-    _bgl_vector_cmplx_mul_double(phase_0);
-    _bgl_load_rs0(s->s0);
-    _bgl_load_rs1(s->s1);
-    _bgl_load_rs2(s->s2);
-    _bgl_load_rs3(s->s3);
-    _bgl_vector_cmplx_mul_rs(fact1);
-    _bgl_add_to_rs0_reg0();
-    _bgl_add_to_rs2_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_add_to_rs3_reg1();
+      // apply the clover plus twisted term to diagonal bit
+      assign_mul_one_sw_pm_imu_site_lexic(ix, &stmp, s, g_mu);
 
-    /*********************** direction -0 ************************/
+      _sse_load_up(stmp.s0);
+      _sse_load(rs.s2);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    iy=g_iup[ix][1]; 
+      _sse_load_up(stmp.s2);
+      _sse_load(rs.s2);
+      _sse_vector_add();
+      _sse_store(rs.s2);      
+      
+      um=&g_gauge_field[iy][0];
+      _prefetch_su3(um);
+      
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s3);
+      _sse_vector_add();
+      
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_0);
+      _sse_store_up(rs.s3);
+    
+      _sse_load_up(stmp.s1);
+      _sse_load(rs.s3);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    up+=1;
-    _prefetch_su3(up); 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp); 
+      _sse_load_up(stmp.s3);
+      _sse_load(rs.s3);
+      _sse_vector_add();
+      _sse_store(rs.s3); 
 
-    _bgl_load_reg0(sm->s0);
-    _bgl_load_reg1(sm->s1);
-    _bgl_load_reg0_up(sm->s2);
-    _bgl_load_reg1_up(sm->s3);
-    _bgl_vector_sub_reg0();
-    _bgl_vector_sub_reg1();
+      /******************************* direction -0 *********************************/
 
-    _bgl_su3_inverse_multiply_double((*um));
-    _bgl_vector_cmplxcg_mul_double(phase_0);
+      iy=g_iup[ix][1];
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_sub_from_rs2_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_sub_from_rs3_reg1();
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    /*********************** direction +1 ************************/
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s2);
+      _sse_vector_sub();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_0);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    iy=g_idn[ix][1]; 
+      _sse_load(rs.s2);
+      _sse_vector_sub();
+      _sse_store(rs.s2);
+      
+      up+=1;
+      _prefetch_su3(up);
+      
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s3);
+      _sse_vector_sub();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_0);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    um=&g_gauge_field[iy][1]; 
+      _sse_load(rs.s3);
+      _sse_vector_sub();
+      _sse_store(rs.s3);
+      
+      /******************************* direction +1 *********************************/
 
-    _prefetch_su3(um); 
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm); 
+      iy=g_idn[ix][1];
+      
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);
 
-    _bgl_load_reg0(sp->s0);
-    _bgl_load_reg1(sp->s1);
-    _bgl_load_reg0_up(sp->s3);
-    _bgl_load_reg1_up(sp->s2);
-    _bgl_vector_i_mul_add_reg0();
-    _bgl_vector_i_mul_add_reg1();
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s3);
+      _sse_vector_i_mul();
+      _sse_vector_add();
 
-    _bgl_su3_multiply_double((*up));
-    _bgl_vector_cmplx_mul_double(phase_1);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_1);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_i_mul_sub_from_rs3_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_i_mul_sub_from_rs2_reg1();
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store(rs.s3); 
+      
+      um=&g_gauge_field[iy][1];
+      _prefetch_su3(um);
 
-    /*********************** direction -1 ************************/
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s2);
+      _sse_vector_i_mul();
+      _sse_vector_add();
 
-    iy=g_iup[ix][2]; 
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_1);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    up+=1;
-    _prefetch_su3(up); 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp); 
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store(rs.s2);       
 
-    _bgl_load_reg0(sm->s0);
-    _bgl_load_reg1(sm->s1);
-    _bgl_load_reg0_up(sm->s3);
-    _bgl_load_reg1_up(sm->s2);
-    _bgl_vector_i_mul_sub_reg0();
-    _bgl_vector_i_mul_sub_reg1();
+      /******************************* direction -1 *********************************/
 
-    _bgl_su3_inverse_multiply_double((*um));
-    _bgl_vector_cmplxcg_mul_double(phase_1);
+      iy=g_iup[ix][2];
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_i_mul_add_to_rs3_reg0();
-    _bgl_i_mul_add_to_rs2_reg1();
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    /*********************** direction +2 ************************/
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s3);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_1);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    iy=g_idn[ix][2];
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store(rs.s3);
 
-    um=&g_gauge_field[iy][2];
-    _prefetch_su3(um);
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm);
+      up+=1;
+      _prefetch_su3(up);
 
-    _bgl_load_reg0(sp->s0);
-    _bgl_load_reg1(sp->s1);
-    _bgl_load_reg1_up(sp->s2);
-    _bgl_load_reg0_up(sp->s3);
-    _bgl_vector_add_reg0();
-    _bgl_vector_sub_reg1();
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s2);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_1);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    _bgl_su3_multiply_double((*up));
-    _bgl_vector_cmplx_mul_double(phase_2);
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store(rs.s2);
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_sub_from_rs2_reg1();
-    _bgl_add_to_rs3_reg0();
+      /******************************* direction +2 *********************************/
 
+      iy=g_idn[ix][2];
 
-    /*********************** direction -2 ************************/
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);
 
-    iy=g_iup[ix][3]; 
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s3);
+      _sse_vector_add();
 
-    up+=1;
-    _prefetch_su3(up); 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp); 
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_2);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _bgl_load_reg0(sm->s0);
-    _bgl_load_reg1(sm->s1);
-    _bgl_load_reg1_up(sm->s2);
-    _bgl_load_reg0_up(sm->s3);
-    _bgl_vector_sub_reg0();
-    _bgl_vector_add_reg1();
+      _sse_load(rs.s3);
+      _sse_vector_add();
+      _sse_store(rs.s3);
+      
+      um=&g_gauge_field[iy][2];
+      _prefetch_su3(um);
 
-    _bgl_su3_inverse_multiply_double((*um));
-    _bgl_vector_cmplxcg_mul_double(phase_2);
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s2);
+      _sse_vector_sub();
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_add_to_rs2_reg1();
-    _bgl_sub_from_rs3_reg0();
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_2);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    /*********************** direction +3 ************************/
+      _sse_load(rs.s2);
+      _sse_vector_sub();
+      _sse_store(rs.s2);      
 
-    iy=g_idn[ix][3]; 
+      /******************************* direction -2 *********************************/
 
-    um=&g_gauge_field[iy][3]; 
-    _prefetch_su3(um); 
-    sm = (spinor *) Q + iy;
-    _prefetch_spinor(sm); 
+      iy=g_iup[ix][3];
 
-    _bgl_load_reg0(sp->s0);
-    _bgl_load_reg1(sp->s1);
-    _bgl_load_reg0_up(sp->s2);
-    _bgl_load_reg1_up(sp->s3);
-    _bgl_vector_i_mul_add_reg0();
-    _bgl_vector_i_mul_sub_reg1();
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
 
-    _bgl_su3_multiply_double((*up));
-    _bgl_vector_cmplx_mul_double(phase_3);
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s3);
+      _sse_vector_sub();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_2);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_add_to_rs1_reg1();
-    _bgl_i_mul_sub_from_rs2_reg0();
-    _bgl_i_mul_add_to_rs3_reg1();
+      _sse_load(rs.s3);
+      _sse_vector_sub();
+      _sse_store(rs.s3);
+      
+      up+=1;
+      _prefetch_su3(up);
 
-    /*********************** direction -3 ************************/
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s2);
+      _sse_vector_add();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_2);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
 
-    iz=(ix+1+VOLUME)%VOLUME;
+      _sse_load(rs.s2);
+      _sse_vector_add();
+      _sse_store(rs.s2);      
+      
+      /******************************* direction +3 *********************************/
 
-    iy=g_iup[iz][0];
+      iy=g_idn[ix][3];
 
-    up=&g_gauge_field[iz][0];
-    _prefetch_su3(up); 
-    sp = (spinor *) Q + iy;
-    _prefetch_spinor(sp); 
+      sm = (spinor *) Q + iy;
+      _prefetch_spinor(sm);
 
-    _bgl_load_reg0(sm->s0);
-    _bgl_load_reg1(sm->s1);
-    _bgl_load_reg0_up(sm->s2);
-    _bgl_load_reg1_up(sm->s3);
-    _bgl_vector_i_mul_sub_reg0();
-    _bgl_vector_i_mul_add_reg1();
+      _sse_load(sp->s0);
+      _sse_load_up(sp->s2);
+      _sse_vector_i_mul();
+      _sse_vector_add();
 
-    _bgl_su3_inverse_multiply_double((*um));
-    _bgl_vector_cmplxcg_mul_double(phase_3);
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_3);
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store(rs.s0);
 
-    _bgl_add_to_rs0_reg0();
-    _bgl_store_rs0(rn->s0);
-    _bgl_i_mul_add_to_rs2_reg0();
-    _bgl_store_rs2(rn->s2);
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store(rs.s2);
+      
+      um=&g_gauge_field[iy][3];
+      _prefetch_su3(um);
 
-    _bgl_add_to_rs1_reg1();
-    _bgl_store_rs1(rn->s1);
-    _bgl_i_mul_sub_from_rs3_reg1();
-    _bgl_store_rs3(rn->s3);
+      _sse_load(sp->s1);
+      _sse_load_up(sp->s3);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
 
-    /************************ end of loop ************************/
-  }
+      _sse_su3_multiply((*up));
+      _sse_vector_cmplx_mul(phase_3);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store(rs.s1);
+
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store(rs.s3);
+      
+      /******************************* direction -3 *********************************/
+
+      iz=(ix+1+VOLUME)%VOLUME;
+
+      iy=g_iup[iz][0];
+      
+      sp = (spinor *) Q + iy;
+      _prefetch_spinor(sp);
+
+      _sse_load(sm->s0);
+      _sse_load_up(sm->s2);
+      _sse_vector_i_mul();
+      _sse_vector_sub();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_3);
+      rn = (spinor *) P + ix;
+      
+      _sse_load(rs.s0);
+      _sse_vector_add();
+      _sse_store_nt(rn->s0);
+
+      _sse_load(rs.s2);
+      _sse_vector_i_mul();      
+      _sse_vector_add();
+      _sse_store_nt(rn->s2);
+
+      up=&g_gauge_field[iz][0];
+      _prefetch_su3(up);
+
+      _sse_load(sm->s1);
+      _sse_load_up(sm->s3);
+      _sse_vector_i_mul();
+      _sse_vector_add();
+      
+      _sse_su3_inverse_multiply((*um));
+      _sse_vector_cmplxcg_mul(phase_3);
+      _sse_load(rs.s1);
+      _sse_vector_add();
+      _sse_store_nt(rn->s1);
+
+      _sse_load(rs.s3);
+      _sse_vector_i_mul();      
+      _sse_vector_sub();
+      _sse_store_nt(rn->s3);
+      
+      /******************************** end of loop *********************************/
+
+    }
+#ifdef OMP
+  } /* OpenMP closing brace */
+#endif
 }
 
 
@@ -1205,7 +1124,7 @@ void D_psi(spinor * const P, spinor * const Q){
   }
 #ifdef _GAUGE_COPY
   if(g_update_gauge_copy) {
-      update_backward_gauge(g_gauge_field);
+    update_backward_gauge(g_gauge_field);
   }
 #endif
 # if defined MPI
@@ -1217,81 +1136,174 @@ void D_psi(spinor * const P, spinor * const Q){
   {
 #endif
 
-  int ix,iy;
-  su3 * restrict up,* restrict um;
-  spinor * restrict rr; 
-  spinor const * restrict s;
-  spinor const * restrict sp;
-  spinor const * restrict sm;
-  _Complex double rho1, rho2;
-  spinor tmpr;
+    int ix,iy;
+    su3 * restrict up,* restrict um;
+    spinor * restrict rr; 
+    spinor const * restrict s;
+    spinor const * restrict sp;
+    spinor const * restrict sm;
+    _Complex double rho1, rho2;
+    spinor tmpr;
 
-  rho1 = 1. + g_mu * I;
-  rho2 = conj(rho1);
+    rho1 = 1. + g_mu * I;
+    rho2 = conj(rho1);
 
-  /************************ loop over all lattice sites *************************/
+    /************************ loop over all lattice sites *************************/
 
 #ifdef OMP
 #pragma omp for
 #endif
-  for (ix=0;ix<VOLUME;ix++)
-  {
-    rr  = (spinor *) P +ix;
-    s  = (spinor *) Q +ix;
+    for (ix=0;ix<VOLUME;ix++)
+      {
+	rr  = (spinor *) P +ix;
+	s  = (spinor *) Q +ix;
 
-    _complex_times_vector(tmpr.s0, rho1, s->s0);
-    _complex_times_vector(tmpr.s1, rho1, s->s1);
-    _complex_times_vector(tmpr.s2, rho2, s->s2);
-    _complex_times_vector(tmpr.s3, rho2, s->s3);
+	_complex_times_vector(tmpr.s0, rho1, s->s0);
+	_complex_times_vector(tmpr.s1, rho1, s->s1);
+	_complex_times_vector(tmpr.s2, rho2, s->s2);
+	_complex_times_vector(tmpr.s3, rho2, s->s3);
 
-    /******************************* direction +0 *********************************/
-    iy=g_iup[ix][0];
-    sp = (spinor *) Q +iy;
-    up=&g_gauge_field[ix][0];
-    p0add(&tmpr, sp, up, phase_0);
+	/******************************* direction +0 *********************************/
+	iy=g_iup[ix][0];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][0];
+	p0add(&tmpr, sp, up, phase_0);
 
-    /******************************* direction -0 *********************************/
-    iy=g_idn[ix][0];
-    sm  = (spinor *) Q +iy;
-    um=&g_gauge_field[iy][0];
-    m0add(&tmpr, sm, um, phase_0);
+	/******************************* direction -0 *********************************/
+	iy=g_idn[ix][0];
+	sm  = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][0];
+	m0add(&tmpr, sm, um, phase_0);
 
-    /******************************* direction +1 *********************************/
-    iy=g_iup[ix][1];
-    sp = (spinor *) Q +iy;
-    up=&g_gauge_field[ix][1];
-    p1add(&tmpr, sp, up, phase_1);
+	/******************************* direction +1 *********************************/
+	iy=g_iup[ix][1];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][1];
+	p1add(&tmpr, sp, up, phase_1);
 
-    /******************************* direction -1 *********************************/
-    iy=g_idn[ix][1];
-    sm = (spinor *) Q +iy;
-    um=&g_gauge_field[iy][1];
-    m1add(&tmpr, sm, um, phase_1);
+	/******************************* direction -1 *********************************/
+	iy=g_idn[ix][1];
+	sm = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][1];
+	m1add(&tmpr, sm, um, phase_1);
 
-    /******************************* direction +2 *********************************/
-    iy=g_iup[ix][2];
-    sp = (spinor *) Q +iy;
-    up=&g_gauge_field[ix][2];
-    p2add(&tmpr, sp, up, phase_2);
+	/******************************* direction +2 *********************************/
+	iy=g_iup[ix][2];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][2];
+	p2add(&tmpr, sp, up, phase_2);
 
-    /******************************* direction -2 *********************************/
-    iy=g_idn[ix][2];
-    sm = (spinor *) Q +iy;
-    um=&g_gauge_field[iy][2];
-    m2add(&tmpr, sm, um, phase_2);
+	/******************************* direction -2 *********************************/
+	iy=g_idn[ix][2];
+	sm = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][2];
+	m2add(&tmpr, sm, um, phase_2);
 
-    /******************************* direction +3 *********************************/
-    iy=g_iup[ix][3];
-    sp = (spinor *) Q +iy;
-    up=&g_gauge_field[ix][3];
-    p3add(&tmpr, sp, up, phase_3);
+	/******************************* direction +3 *********************************/
+	iy=g_iup[ix][3];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][3];
+	p3add(&tmpr, sp, up, phase_3);
 
-    /******************************* direction -3 *********************************/
-    iy=g_idn[ix][3];
-    sm = (spinor *) Q +iy;
-    um=&g_gauge_field[iy][3];
-    m3addandstore(rr, sm, um, phase_3, &tmpr);
+	/******************************* direction -3 *********************************/
+	iy=g_idn[ix][3];
+	sm = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][3];
+	m3addandstore(rr, sm, um, phase_3, &tmpr);
+      }
+#ifdef OMP
+  } /* OpenMP closing brace */
+#endif
+}
+
+void Dsw_psi(spinor * const P, spinor * const Q){
+  if(P==Q){
+    printf("Error in Dsw_psi (Dsw_psi.c):\n");
+    printf("Arguments must be different spinor fields\n");
+    printf("Program aborted\n");
+    exit(1);
   }
+#ifdef _GAUGE_COPY
+  if(g_update_gauge_copy) {
+    update_backward_gauge(g_gauge_field);
+  }
+#endif
+# if defined MPI
+  xchange_lexicfield(Q);
+# endif
+
+#ifdef OMP
+#pragma omp parallel
+  {
+#endif
+
+    int ix,iy;
+    su3 * restrict up,* restrict um;
+    spinor * restrict rr; 
+    spinor const * restrict s;
+    spinor const * restrict sp;
+    spinor const * restrict sm;
+    spinor tmpr;
+
+    /************************ loop over all lattice sites *************************/
+
+#ifdef OMP
+#pragma omp for
+#endif
+    for (ix=0;ix<VOLUME;ix++)
+      {
+	rr  = (spinor *) P +ix;
+	s  = (spinor *) Q +ix;
+	assign_mul_one_sw_pm_imu_site_lexic(ix,&tmpr,s,g_mu);
+
+	/******************************* direction +0 *********************************/
+	iy=g_iup[ix][0];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][0];
+	p0add(&tmpr, sp, up, phase_0);
+
+	/******************************* direction -0 *********************************/
+	iy=g_idn[ix][0];
+	sm  = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][0];
+	m0add(&tmpr, sm, um, phase_0);
+
+	/******************************* direction +1 *********************************/
+	iy=g_iup[ix][1];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][1];
+	p1add(&tmpr, sp, up, phase_1);
+
+	/******************************* direction -1 *********************************/
+	iy=g_idn[ix][1];
+	sm = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][1];
+	m1add(&tmpr, sm, um, phase_1);
+
+	/******************************* direction +2 *********************************/
+	iy=g_iup[ix][2];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][2];
+	p2add(&tmpr, sp, up, phase_2);
+
+	/******************************* direction -2 *********************************/
+	iy=g_idn[ix][2];
+	sm = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][2];
+	m2add(&tmpr, sm, um, phase_2);
+
+	/******************************* direction +3 *********************************/
+	iy=g_iup[ix][3];
+	sp = (spinor *) Q +iy;
+	up=&g_gauge_field[ix][3];
+	p3add(&tmpr, sp, up, phase_3);
+
+	/******************************* direction -3 *********************************/
+	iy=g_idn[ix][3];
+	sm = (spinor *) Q +iy;
+	um=&g_gauge_field[iy][3];
+	m3addandstore(rr, sm, um, phase_3, &tmpr);
+      }
 #ifdef OMP
   } /* OpenMP closing brace */
 #endif
@@ -1318,8 +1330,19 @@ void D_psi_prec(spinor * const P, spinor * const Q){
 /* the block local gauge field is assumed to be in the order  */
 /* that is needed int local_D, which means also that it is a  */
 /* double copy                                                */
-
+// CU: has problems with SSE2,3
 void Block_D_psi(block * blk, spinor * const rr, spinor * const s) {
+
+  if(g_c_sw > 0)
+     Block_Dsw_psi(blk,rr,s);
+  else 
+     Block_Dtm_psi(blk,rr,s);
+
+  return;
+}
+ 
+//this version is for c_sw=0
+void Block_Dtm_psi(block * blk, spinor * const rr, spinor * const s) {
   int i;
   spinor *r = rr;
   spinor *t = s;
@@ -1327,9 +1350,6 @@ void Block_D_psi(block * blk, spinor * const rr, spinor * const s) {
   int * idx = blk->idx;
   static _Complex double rhoa, rhob;
   spinor tmpr;
-#if (defined BGL && defined XLC)
-  __alignx(16,s);
-#endif
   if(blk_gauge_eo) {
     init_blocks_gaugefield();
   }
@@ -1341,18 +1361,94 @@ void Block_D_psi(block * blk, spinor * const rr, spinor * const s) {
   _spinor_null(s[blk->volume]);
 
   for(i = 0; i < blk->volume; i++) {
-#if (defined BGL && defined XLC)
-    _bgl_load_rs0(t->s0);
-    _bgl_load_rs1(t->s1);
-    _bgl_load_rs2(t->s2);
-    _bgl_load_rs3(t->s3);
-    _bgl_vector_cmplx_mul_rs(rhoa);
-#else
     _complex_times_vector(tmpr.s0, rhoa, t->s0);
     _complex_times_vector(tmpr.s1, rhoa, t->s1);
     _complex_times_vector(tmpr.s2, rhob, t->s2);
     _complex_times_vector(tmpr.s3, rhob, t->s3);
-#endif
+
+    local_H(r, s, u, idx, &tmpr);
+    if(use_iQ_dfl) gamma5(r, r, 1);
+
+    r++;
+    t++;
+    idx += 8;
+    u += 8;
+  }
+
+  return;
+}
+
+
+void Dsw_psi_prec(spinor * const P, spinor * const Q){
+
+  /* todo: do preconditioning */
+  spinorPrecWS *ws=(spinorPrecWS*)g_precWS;
+  static _Complex double alpha = -1.0;
+
+  alpha = -0.5;
+  spinorPrecondition(P,Q,ws,T,L,alpha,0,1);
+  Dsw_psi(g_spinor_field[DUM_MATRIX],P);
+  alpha = -0.5;
+  spinorPrecondition(P,g_spinor_field[DUM_MATRIX],ws,T,L,alpha,0,1);
+}
+
+/* apply the Dirac operator to the block local spinor field s */
+/* and store the result in block local spinor field rr        */
+/* for block blk                                              */
+/* the block local gauge field is assumed to be in the order  */
+/* that is needed int local_D, which means also that it is a  */
+/* double copy                                                */
+// CU: has problems with SSE2,3
+void Block_Dsw_psi(block * blk, spinor * const rr, spinor * const s) {
+  int i;
+  spinor *r = rr;
+  spinor *t = s;
+  su3 * u = blk->u;
+  int * idx = blk->idx;
+  //static _Complex double rhoa, rhob;
+  spinor tmpr;
+
+  int it,ix,iy,iz; //lexiographic index of the site w.r.t the block
+  int bt,bx,by,bz; //block coordinate on the local mpi process
+  int dT,dX,dY,dZ; //block size
+  int sT,sX,sY,sZ; //constant shifts
+  int lx; //lexiographic index of the block site w.r.t the local mpi process
+
+  dT = blk->BT;
+  dX = blk->BLX;
+  dY = blk->BLY;
+  dZ = blk->BLZ;
+
+  bt = blk->mpilocal_coordinate[0];
+  bx = blk->mpilocal_coordinate[1];
+  by = blk->mpilocal_coordinate[2];
+  bz = blk->mpilocal_coordinate[3];
+
+  sT = bt*dT;
+  sX = bx*dX;
+  sY = by*dY;
+  sZ = bz*dZ;
+  
+  if(blk_gauge_eo) {
+    init_blocks_gaugefield();
+  }
+  //rhoa = 1.0 + g_mu * I;
+  //rhob = conj(rhoa);
+
+  /* set the boundary term to zero */
+  _spinor_null(rr[blk->volume]);
+  _spinor_null(s[blk->volume]);
+
+  for(i = 0; i < blk->volume; i++) {
+
+    iz = i%dZ;
+    iy = (i/dZ)%dY;
+    ix = (i/(dZ*dY))%dX;
+    it = i/(dZ*dY*dX);
+
+    lx = g_ipt[it+sT][ix+sX][iy+sY][iz+sZ];
+
+    assign_mul_one_sw_pm_imu_site_lexic(lx,&tmpr,t,g_mu);
 
     local_H(r, s, u, idx, &tmpr);
 
@@ -1361,8 +1457,10 @@ void Block_D_psi(block * blk, spinor * const rr, spinor * const s) {
     idx += 8;
     u += 8;
   }
+
   return;
 }
+
 
 /* Apply Hopping Matrix to a even(odd) spinor */
 void Block_H_psi(block * blk, spinor * const rr, spinor * const s, const int eo) {
@@ -1387,22 +1485,16 @@ void Block_H_psi(block * blk, spinor * const rr, spinor * const s, const int eo)
   _spinor_null(s[blk->volume/2]);
   
   for(i = 0; i < blk->volume/2; i++) {
-#if (defined BGL && defined XLC)
     _spinor_null(tmpr);
-    _bgl_load_rs0(tmpr.s0);
-    _bgl_load_rs1(tmpr.s1);
-    _bgl_load_rs2(tmpr.s2);
-    _bgl_load_rs3(tmpr.s3);
-#else
-    _spinor_null(tmpr);
-#endif
 
     local_H(r, s, u, eoidx, &tmpr);
+    if (use_iQ_dfl) gamma5(r, r, 1);
 
     r++;
     eoidx += 8;
     u += 8;
   }
+
   return;
 }
 

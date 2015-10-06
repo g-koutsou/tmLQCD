@@ -71,6 +71,16 @@ typedef struct {
                                      1 compute the residulas of the eigenvalues*/
    double arpackcg_eig_tol;       /*Tolerance for computing eigenvalues with arpack */
    int    arpackcg_eig_maxiter;   /*Maximum number of iterations to be used by arpack*/
+   int    arpackcg_read_basis;    /*0 compute the basis vector of the deflation subspace using arpack
+                                    1 read the basis vectors for the deflation subspace from disk*/
+   int    arpackcg_store_basis;   /*if computing the basis of the deflation subspace then store them
+                                    if store_basis =1, or don't store them if store_basis=0*/
+   char   arpackcg_basis_fname[500];   /*first part of the name of the file name used to store the 
+                                         basis vectors. File names will be of the form 
+                                         arpackcg_basis_fname.xxxxx where xxxxx is the number of the 
+                                         basis vector with leading zeros*/
+   int    arpackcg_basis_prec;       /*if storing/reading the basis to or from disk, this specifies the
+                                       precision of the data in the files. 0 single, 1 double*/ 
    char   arpack_logfile[500];    /*file name for the logfile used by arpack*/
 
   /*************************************
